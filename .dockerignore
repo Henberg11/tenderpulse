@@ -1,0 +1,28 @@
+# Without this file, `COPY . .` in the Dockerfile bakes these into every
+# built image layer -- including .env, which holds real secrets (Supabase
+# password, Gmail app password). The container gets the real .env at
+# runtime via docker-compose's `env_file:`, so none of this is needed inside
+# the image itself.
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore
+
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+.venv/
+venv/
+
+debug/
+storage/
+backups/
+celerybeat-schedule.db
+
+.vscode/
+.idea/
+.DS_Store

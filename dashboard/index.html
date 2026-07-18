@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TenderPulse</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --card-border: #262b36;
+    --text: #e8eaed;
+    --text-dim: #9aa1ac;
+    --accent: #4f8cff;
+    --green: #3ecf8e;
+    --orange: #f5a623;
+    --red: #ef5350;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding-bottom: 40px;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--card-border);
+    z-index: 10;
+  }
+  h1 { font-size: 20px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  h1 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  input[type="text"] {
+    flex: 1;
+    min-width: 140px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  .chip {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    color: var(--text-dim);
+    padding: 8px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .chip.active { background: var(--accent); color: white; border-color: var(--accent); }
+  main { padding: 16px; max-width: 720px; margin: 0 auto; }
+  .status-line { color: var(--text-dim); font-size: 13px; margin-bottom: 16px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .card-top { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
+  .title { font-size: 15px; font-weight: 600; line-height: 1.4; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .badge {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    background: #232838;
+    color: var(--text-dim);
+  }
+  .badge.precise { background: rgba(62, 207, 142, 0.15); color: var(--green); }
+  .badge.corrigendum { background: rgba(245, 166, 35, 0.15); color: var(--orange); }
+  .meta { font-size: 13px; color: var(--text-dim); margin-top: 10px; line-height: 1.6; }
+  .meta a { color: var(--accent); text-decoration: none; }
+  .deadline { font-weight: 600; }
+  .deadline.urgent { color: var(--red); }
+  .deadline.soon { color: var(--orange); }
+  .ai-summary {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: #1c2029;
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .expand-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 13px;
+    padding: 8px 0 0;
+    cursor: pointer;
+  }
+  .details { display: none; margin-top: 10px; font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+  .details.open { display: block; }
+  .details h4 { margin: 10px 0 4px; color: var(--text); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .empty, .loading, .error { text-align: center; color: var(--text-dim); padding: 60px 20px; font-size: 14px; }
+  .error { color: var(--red); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="dot"></span> TenderPulse</h1>
+  <div class="controls">
+    <input type="text" id="search" placeholder="Search titles...">
+    <span class="chip active" data-filter="all">All</span>
+    <span class="chip" data-filter="precise">My Products</span>
+    <span class="chip" data-filter="corrigendum">Changed</span>
+  </div>
+</header>
+
+<main>
+  <div class="status-line" id="statusLine">Loading...</div>
+  <div id="results"></div>
+</main>
+
+<script src="config.js"></script>
+<script>
+let allTenders = [];
+let activeFilter = "all";
+
+async function loadTenders() {
+  const resultsEl = document.getElementById("results");
+  const statusEl = document.getElementById("statusLine");
+
+  if (SUPABASE_CONFIG.url.includes("YOUR_PROJECT_REF")) {
+    resultsEl.innerHTML = `<div class="error">config.js hasn't been filled in yet -- add your Supabase URL and anon key.</div>`;
+    statusEl.textContent = "";
+    return;
+  }
+
+  resultsEl.innerHTML = `<div class="loading">Loading your tenders...</div>`;
+
+  try {
+    const res = await fetch(
+      `${SUPABASE_CONFIG.url}/rest/v1/tenders?select=*&order=bid_submission_end.asc.nullslast&limit=200`,
+      {
+        headers: {
+          apikey: SUPABASE_CONFIG.anonKey,
+          Authorization: `Bearer ${SUPABASE_CONFIG.anonKey}`,
+        },
+      }
+    );
+    if (!res.ok) throw new Error(`Supabase returned ${res.status}: ${await res.text()}`);
+    allTenders = await res.json();
+    statusEl.textContent = `${allTenders.length} tenders \u00b7 updated ${new Date().toLocaleTimeString()}`;
+    render();
+  } catch (err) {
+    resultsEl.innerHTML = `<div class="error">Couldn't load tenders: ${err.message}</div>`;
+    statusEl.textContent = "";
+  }
+}
+
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const diff = new Date(dateStr) - new Date();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+}
+
+function render() {
+  const resultsEl = document.getElementById("results");
+  const query = document.getElementById("search").value.toLowerCase();
+
+  let filtered = allTenders.filter((t) => t.title.toLowerCase().includes(query));
+
+  if (activeFilter === "precise") {
+    filtered = filtered.filter((t) => t.matched_keywords && t.matched_keywords.length > 0);
+  } else if (activeFilter === "corrigendum") {
+    filtered = filtered.filter((t) => t.status === "corrigendum_issued");
+  }
+
+  if (filtered.length === 0) {
+    resultsEl.innerHTML = `<div class="empty">No tenders match. Try a different search or filter.</div>`;
+    return;
+  }
+
+  resultsEl.innerHTML = filtered.map(renderCard).join("");
+}
+
+function renderCard(t) {
+  const days = daysUntil(t.bid_submission_end);
+  let deadlineClass = "";
+  let deadlineText = "No deadline captured yet";
+  if (days !== null) {
+    deadlineClass = days <= 2 ? "urgent" : days <= 7 ? "soon" : "";
+    deadlineText = days < 0 ? "Closed" : days === 0 ? "Closes today" : `${days} day${days === 1 ? "" : "s"} left`;
+  }
+
+  const isPrecise = t.matched_keywords && t.matched_keywords.length > 0;
+  const isChanged = t.status === "corrigendum_issued";
+
+  const hasDetails = t.ai_eligibility_summary || t.ai_risk_factors;
+  const cardId = `details-${t.id}`;
+
+  return `
+    <div class="card">
+      <div class="card-top">
+        <div class="title">${escapeHtml(t.title)}</div>
+      </div>
+      <div class="badges">
+        ${isPrecise ? `<span class="badge precise">Core Match</span>` : ""}
+        ${isChanged ? `<span class="badge corrigendum">Recently Changed</span>` : ""}
+        ${(t.matched_keywords || []).map((k) => `<span class="badge">${escapeHtml(k)}</span>`).join("")}
+      </div>
+      <div class="meta">
+        <a href="${t.portal_url || "#"}" target="_blank" rel="noopener">${escapeHtml(t.tender_number)}</a>
+        &middot; <span class="deadline ${deadlineClass}">${deadlineText}</span>
+      </div>
+      ${t.ai_executive_summary ? `<div class="ai-summary">${escapeHtml(t.ai_executive_summary)}</div>` : ""}
+      ${hasDetails ? `
+        <button class="expand-btn" onclick="toggleDetails('${cardId}')">Show eligibility &amp; risk details \u2193</button>
+        <div class="details" id="${cardId}">
+          ${t.ai_eligibility_summary ? `<h4>Eligibility</h4><div>${escapeHtml(t.ai_eligibility_summary)}</div>` : ""}
+          ${t.ai_risk_factors ? `<h4>Risk Factors</h4><div>${escapeHtml(t.ai_risk_factors)}</div>` : ""}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function toggleDetails(id) {
+  document.getElementById(id).classList.toggle("open");
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str || "";
+  return div.innerHTML;
+}
+
+document.getElementById("search").addEventListener("input", render);
+document.querySelectorAll(".chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    document.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
+    chip.classList.add("active");
+    activeFilter = chip.dataset.filter;
+    render();
+  });
+});
+
+loadTenders();
+// Refresh automatically every 5 minutes if left open on a phone.
+setInterval(loadTenders, 5 * 60 * 1000);
+</script>
+
+</body>
+</html>
