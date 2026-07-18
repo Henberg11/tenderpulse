@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tenderpulse
+          POSTGRES_PASSWORD: tenderpulse
+          POSTGRES_DB: tenderpulse_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tenderpulse -d tenderpulse_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://tenderpulse:tenderpulse@localhost:5432/tenderpulse_test
+          DATABASE_URL_SYNC: postgresql+psycopg2://tenderpulse:tenderpulse@localhost:5432/tenderpulse_test
+          DATABASE_SSL_REQUIRE: "false"
+          REDIS_URL: redis://localhost:6379/0
+        run: pytest
+
+      - name: Compile check
+        run: find . -name "*.py" -not -path "./.venv/*" -exec python -m py_compile {} \;

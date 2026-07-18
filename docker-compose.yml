@@ -1,0 +1,62 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: celery -A app.tasks.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_started
+
+  beat:
+    build: .
+    restart: unless-stopped
+    command: celery -A app.tasks.celery_app beat --loglevel=info
+    volumes:
+      - .:/app
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_started
+
+  # Automated nightly database backup -- now backs up FROM Supabase TO a
+  # local folder, as an extra safety net alongside Supabase's own backups.
+  # See scripts/backup.sh. Keeps the last 14 daily dumps by default.
+  backup:
+    build: .
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "while true; do sh scripts/backup.sh; sleep 86400; done"]
+    volumes:
+      - .:/app
+      - backups:/app/backups
+    env_file: .env
+
+volumes:
+  backups:
