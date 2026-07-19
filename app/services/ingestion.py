@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.crawlers.base import RawTenderListing
 from app.models import Tender, TenderStatus, PortalSource, Corrigendum, Organisation
 from app.utils.indian_states import extract_state
-from app.utils.keywords import matches_any_keyword
+from app.utils.keywords import matches_any_keyword, is_likely_relevant
 
 TRACKED_FIELDS = ["title", "estimated_value", "emd_amount", "bid_submission_end"]
 
@@ -42,13 +42,24 @@ async def ingest_listing(
     listing: RawTenderListing,
     portal: PortalSource,
     keywords: list[str],
-) -> IngestResult:
+) -> IngestResult | None:
     """Insert a new tender, or update an existing one and record any
     corrigenda for fields that changed. Returns both the Tender row and how
     many corrigenda were created -- the caller (crawl_tasks.py) uses that
     count for the CrawlRun audit log, which previously always showed 0 here
     because this function only ever returned the Tender, silently dropping
-    the corrigendum count."""
+    the corrigendum count.
+
+    Returns None if the tender fails the relevance check (see
+    is_likely_relevant in keywords.py) -- confirmed necessary via real
+    reports of completely unrelated tenders (a multivitamin supplement, a
+    metal storage stand) getting saved and shown on the dashboard, simply
+    because GeM's own search returned them for one of our search
+    keywords. This system was trusting GeM's black-box search blindly
+    instead of verifying the actual title text made sense."""
+    if not is_likely_relevant(listing.title):
+        logger.info(f"[ingest] skipping irrelevant tender (failed relevance check): {listing.title[:80]}")
+        return None
 
     result = await db.execute(
         select(Tender).where(
@@ -121,6 +132,17 @@ async def ingest_listing(
     # since only *new* tenders would get this field populated.
     if not existing.location and state:
         existing.location = state
+
+    # Re-apply keyword matching every time, not just on first ingestion --
+    # confirmed a real bug via a direct report: a keyword-matching fix
+    # (word-boundary matching, to stop "pant" matching inside "Panty")
+    # had no effect on tenders already saved before the fix, because this
+    # `matched` value was computed above but only ever written to
+    # NEW tenders, never re-saved on existing ones. This meant every
+    # already-seen tender's match status was frozen at whatever it was on
+    # first ingestion, forever -- immune to any future improvement in the
+    # matching logic itself.
+    existing.matched_keywords = matched
 
     await db.flush()
     return IngestResult(tender=existing, corrigenda_created=corrigenda_created)

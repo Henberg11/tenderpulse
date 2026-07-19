@@ -90,3 +90,38 @@ def matches_any_keyword(text: str, keywords: list[str] | None = None) -> list[st
         if re.search(pattern, text.lower()):
             matches.append(kw)
     return matches
+
+
+# Confirmed via a real report: "PROCUREMENT OF HEAVY DUTY METALLIC UNIFORM
+# HANGING STAND" legitimately contains the word "uniform" but is about
+# storage furniture, not the garment itself. A small, deliberately
+# conservative list -- only very clear non-garment context words, to avoid
+# accidentally excluding a genuine tender that happens to mention one of
+# these in passing (e.g. a tender that includes both uniforms AND lockers
+# as separate line items would still correctly match on other grounds).
+NON_GARMENT_CONTEXT = [
+    "hanging stand",
+    "rack",
+    "locker",
+    "cupboard",
+    "almirah",
+]
+
+
+def is_likely_relevant(title: str) -> bool:
+    """The real gate for whether a tender is worth saving at all -- not just
+    whether GeM's own search returned it. Confirmed necessary via a real
+    report: a multivitamin/supplement tender was showing up in the
+    dashboard despite its title containing none of our search terms at
+    all -- the system was saving everything GeM's search returned,
+    unconditionally, rather than verifying the actual title text locally.
+    GeM's search is a black box we don't control; this is the check that
+    actually matters."""
+    if matches_any_keyword(title, NON_GARMENT_CONTEXT):
+        # Word-boundary matching here too -- confirmed necessary via direct
+        # testing: a plain substring check on "rack" would have wrongly
+        # excluded every genuine tracksuit tender, since "rack" is
+        # literally a substring of "tracksuit". Same class of bug as the
+        # earlier "pant" matching inside "Panty".
+        return False
+    return bool(matches_any_keyword(title, GEM_SEARCH_TERMS))

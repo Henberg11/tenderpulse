@@ -118,6 +118,12 @@ async def _crawl_gem_async():
                 for listing in all_listings:
                     result = await ingest_listing(db, listing, PortalSource.GEM, SCHOOL_UNIFORM_KEYWORDS)
                     await db.commit()
+                    if result is None:
+                        # Failed the relevance check (see is_likely_relevant
+                        # in keywords.py) -- not a genuine uniform tender,
+                        # skip it entirely rather than downloading its
+                        # document or counting it.
+                        continue
                     tenders_created += 1
                     corrigenda_detected += result.corrigenda_created
 
