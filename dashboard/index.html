@@ -127,12 +127,27 @@
   .card {
     background: var(--card);
     border: 1px solid var(--card-border);
+    border-left: 3px solid var(--card-border);
     border-radius: 12px;
     padding: 16px;
     margin-bottom: 12px;
   }
-  .card-top { display: flex; justify-content: space-between; align-items: start; gap: 8px; }
-  .title { font-size: 15px; font-weight: 600; line-height: 1.4; }
+  .card.card-urgent { border-left-color: var(--red); }
+  .card.card-soon { border-left-color: var(--orange); }
+  .card-top { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+  .title { font-size: 15px; font-weight: 600; line-height: 1.4; flex: 1; }
+  .deadline-badge {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: rgba(128, 128, 128, 0.15);
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .deadline-badge.urgent { background: rgba(239, 83, 80, 0.15); color: var(--red); }
+  .deadline-badge.soon { background: rgba(245, 166, 35, 0.15); color: var(--orange); }
   .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   .badge {
     font-size: 11px;
@@ -143,11 +158,9 @@
   }
   .badge.precise { background: rgba(62, 207, 142, 0.15); color: var(--green); }
   .badge.corrigendum { background: rgba(245, 166, 35, 0.15); color: var(--orange); }
-  .meta { font-size: 13px; color: var(--text-dim); margin-top: 10px; line-height: 1.6; }
+  .badge.portal { background: rgba(79, 140, 255, 0.15); color: var(--accent); font-weight: 700; }
+  .meta { font-size: 13px; color: var(--text-dim); margin-top: 10px; line-height: 1.7; }
   .meta a { color: var(--accent); text-decoration: none; }
-  .deadline { font-weight: 600; }
-  .deadline.urgent { color: var(--red); }
-  .deadline.soon { color: var(--orange); }
   .ai-summary {
     margin-top: 12px;
     padding: 10px 12px;
@@ -156,6 +169,17 @@
     font-size: 13px;
     color: var(--text-dim);
     line-height: 1.5;
+  }
+  .card-actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .view-btn {
+    background: var(--accent);
+    color: white;
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 8px;
+    display: inline-block;
   }
   .expand-btn {
     background: none;
@@ -214,7 +238,7 @@ async function loadTenders() {
 
   try {
     const res = await fetch(
-      `${SUPABASE_CONFIG.url}/rest/v1/tenders?select=*&order=bid_submission_end.asc.nullslast&limit=200`,
+      `${SUPABASE_CONFIG.url}/rest/v1/tenders?select=*,organisations(name)&order=bid_submission_end.asc.nullslast&limit=200`,
       {
         headers: {
           apikey: SUPABASE_CONFIG.anonKey,
@@ -298,35 +322,43 @@ function render() {
 function renderCard(t) {
   const days = daysUntil(t.bid_submission_end);
   let deadlineClass = "";
-  let deadlineText = "No deadline captured yet";
+  let deadlineText = "No deadline yet";
   if (days !== null) {
     deadlineClass = days <= 2 ? "urgent" : days <= 7 ? "soon" : "";
-    deadlineText = days < 0 ? "Closed" : days === 0 ? "Closes today" : `${days} day${days === 1 ? "" : "s"} left`;
+    deadlineText = days < 0 ? "Closed" : days === 0 ? "Today" : `${days}d left`;
   }
 
   const isPrecise = t.matched_keywords && t.matched_keywords.length > 0;
   const isChanged = t.status === "corrigendum_issued";
+  const orgName = t.organisations && t.organisations.name;
 
   const hasDetails = t.ai_eligibility_summary || t.ai_risk_factors;
   const cardId = `details-${t.id}`;
 
   return `
-    <div class="card">
+    <div class="card ${deadlineClass ? "card-" + deadlineClass : ""}">
       <div class="card-top">
         <div class="title">${escapeHtml(t.title)}</div>
+        <div class="deadline-badge ${deadlineClass}">${deadlineText}</div>
       </div>
       <div class="badges">
+        <span class="badge portal">${escapeHtml((t.portal_source || "gem").toUpperCase())}</span>
         ${isPrecise ? `<span class="badge precise">Core Match</span>` : ""}
         ${isChanged ? `<span class="badge corrigendum">Recently Changed</span>` : ""}
         ${(t.matched_keywords || []).map((k) => `<span class="badge">${escapeHtml(k)}</span>`).join("")}
       </div>
       <div class="meta">
-        <a href="${t.portal_url || "#"}" target="_blank" rel="noopener">${escapeHtml(t.tender_number)}</a>
-        &middot; <span class="deadline ${deadlineClass}">${deadlineText}</span>
+        ${orgName ? `<div>\u{1F3E2} ${escapeHtml(orgName)}</div>` : ""}
+        ${t.location ? `<div>\u{1F4CD} ${escapeHtml(t.location)}</div>` : ""}
+        <div>\u{1F4B0} ${t.estimated_value ? "\u20b9" + Number(t.estimated_value).toLocaleString("en-IN") : "Value not specified"}</div>
+        <div>${escapeHtml(t.tender_number)}</div>
       </div>
       ${t.ai_executive_summary ? `<div class="ai-summary">${escapeHtml(t.ai_executive_summary)}</div>` : ""}
+      <div class="card-actions">
+        ${t.portal_url ? `<a class="view-btn" href="${t.portal_url}" target="_blank" rel="noopener">View Document \u2192</a>` : ""}
+        ${hasDetails ? `<button class="expand-btn" onclick="toggleDetails('${cardId}')">Eligibility &amp; risk \u2193</button>` : ""}
+      </div>
       ${hasDetails ? `
-        <button class="expand-btn" onclick="toggleDetails('${cardId}')">Show eligibility &amp; risk details \u2193</button>
         <div class="details" id="${cardId}">
           ${t.ai_eligibility_summary ? `<h4>Eligibility</h4><div>${escapeHtml(t.ai_eligibility_summary)}</div>` : ""}
           ${t.ai_risk_factors ? `<h4>Risk Factors</h4><div>${escapeHtml(t.ai_risk_factors)}</div>` : ""}
