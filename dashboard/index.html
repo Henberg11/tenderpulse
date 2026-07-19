@@ -105,10 +105,28 @@
     background: var(--card);
     border: 1px solid var(--card-border);
     color: var(--text);
-    padding: 12px 10px;
+    padding: 6px;
     border-radius: 8px;
     font-size: 14px;
-    max-width: 130px;
+    flex: 1;
+    min-width: 160px;
+  }
+  select#stateFilter option {
+    padding: 6px 8px;
+  }
+  select#stateFilter option:checked {
+    background: var(--accent);
+    color: white;
+  }
+  .clear-states-btn {
+    background: none;
+    border: 1px solid var(--card-border);
+    color: var(--text-dim);
+    border-radius: 8px;
+    padding: 0 14px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
   }
   .chip {
     background: var(--card);
@@ -219,9 +237,12 @@
   <div class="stats" id="statsBar"></div>
   <div class="controls">
     <input type="text" id="search" placeholder="Search titles...">
-    <select id="stateFilter">
-      <option value="">All States</option>
-    </select>
+  </div>
+  <div class="controls" style="margin-top: 8px;">
+    <select id="stateFilter" multiple size="3"></select>
+    <button class="clear-states-btn" onclick="clearStateFilter()">Show all states</button>
+  </div>
+  <div class="controls" style="margin-top: 8px;">
     <span class="chip active" data-filter="all">All</span>
     <span class="chip" data-filter="precise">My Products</span>
     <span class="chip" data-filter="urgent">Closing Soon</span>
@@ -268,7 +289,6 @@ async function loadTenders() {
     allTenders = await res.json();
     statusEl.textContent = `${allTenders.length} tenders \u00b7 updated ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
     populateStateFilter();
-    renderStats();
     render();
   } catch (err) {
     if (allTenders.length === 0) {
@@ -284,14 +304,26 @@ function daysUntil(dateStr) {
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
+function getStateFilteredTenders() {
+  const selectedStates = [...document.getElementById("stateFilter").selectedOptions].map((o) => o.value);
+  if (selectedStates.length === 0) return allTenders;
+  return allTenders.filter((t) => selectedStates.includes(t.location));
+}
+
+// Stats reflect the state selection (your region) but stay stable while you
+// search or tap the other filter chips below -- like an inbox's unread
+// count, they summarize your region at a glance rather than jumping around
+// with every keystroke, which would make them less useful as a quick
+// morning check.
 function renderStats() {
   const statsBar = document.getElementById("statsBar");
-  const closingSoon = allTenders.filter((t) => {
+  const stateFiltered = getStateFilteredTenders();
+  const closingSoon = stateFiltered.filter((t) => {
     const d = daysUntil(t.bid_submission_end);
     return d !== null && d >= 0 && d <= 7;
   }).length;
-  const coreMatches = allTenders.filter((t) => t.matched_keywords && t.matched_keywords.length > 0).length;
-  const changed = allTenders.filter((t) => t.status === "corrigendum_issued").length;
+  const coreMatches = stateFiltered.filter((t) => t.matched_keywords && t.matched_keywords.length > 0).length;
+  const changed = stateFiltered.filter((t) => t.status === "corrigendum_issued").length;
 
   statsBar.innerHTML = `
     <div class="stat ${closingSoon > 0 ? "urgent" : ""}">
@@ -307,32 +339,49 @@ function renderStats() {
       <div class="label">Recently Changed</div>
     </div>
     <div class="stat">
-      <div class="num">${allTenders.length}</div>
+      <div class="num">${stateFiltered.length}</div>
       <div class="label">Total Tracked</div>
     </div>
   `;
 }
 
+// Defaults to your actual coverage area -- these two always appear as
+// options even before any tender from them has been seen yet, so the
+// default filter is meaningful from the very first load, not just once
+// enough data has accumulated.
+const DEFAULT_STATES = ["Gujarat", "Dadra and Nagar Haveli and Daman and Diu"];
+let stateFilterInitialized = false;
+
 function populateStateFilter() {
   const select = document.getElementById("stateFilter");
-  const currentValue = select.value;
-  const states = [...new Set(allTenders.map((t) => t.location).filter(Boolean))].sort();
+  const previouslySelected = new Set([...select.selectedOptions].map((o) => o.value));
+  const dataStates = allTenders.map((t) => t.location).filter(Boolean);
+  const allStates = [...new Set([...DEFAULT_STATES, ...dataStates])].sort();
 
-  select.innerHTML = `<option value="">All States</option>` +
-    states.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
-  select.value = currentValue; // preserve selection across refreshes
+  select.innerHTML = allStates.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+
+  // Only apply the default selection once, the very first time -- after
+  // that, respect whatever the person has chosen, including if they
+  // deliberately cleared it to see all states.
+  const toSelect = stateFilterInitialized ? previouslySelected : new Set(DEFAULT_STATES);
+  [...select.options].forEach((opt) => {
+    opt.selected = toSelect.has(opt.value);
+  });
+  stateFilterInitialized = true;
+}
+
+function clearStateFilter() {
+  const select = document.getElementById("stateFilter");
+  [...select.options].forEach((opt) => (opt.selected = false));
+  render();
 }
 
 function render() {
+  renderStats();
   const resultsEl = document.getElementById("results");
   const query = document.getElementById("search").value.toLowerCase();
-  const stateFilter = document.getElementById("stateFilter").value;
 
-  let filtered = allTenders.filter((t) => t.title.toLowerCase().includes(query));
-
-  if (stateFilter) {
-    filtered = filtered.filter((t) => t.location === stateFilter);
-  }
+  let filtered = getStateFilteredTenders().filter((t) => t.title.toLowerCase().includes(query));
 
   if (activeFilter === "precise") {
     filtered = filtered.filter((t) => t.matched_keywords && t.matched_keywords.length > 0);
