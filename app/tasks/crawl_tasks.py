@@ -23,12 +23,14 @@ from app.utils.redact import redact_secrets
 # from a crashed worker, not a real overlap, so we proceed anyway rather than
 # blocking forever.
 #
-# Raised from 30 to 90: a crawl now downloads documents for every genuine
-# tender, not just Core Matches (~8x more downloads than before), and
-# legitimately takes 20-40+ minutes. The old 30-minute threshold was sized
-# for the previous, much faster crawl and was incorrectly treating real
-# in-progress runs as stale during real testing this session.
-OVERLAP_GUARD_MINUTES = 90
+# Raised from 30 to 90 to 300: crawls now paginate fully (see
+# MAX_PAGES_PER_KEYWORD / MAX_CONSIGNEE_SEARCH_PAGES in gem_crawler.py)
+# rather than stopping at a small page cap, and could legitimately take
+# several hours. 300 minutes (5 hours) stays comfortably shorter than the
+# 7.5-hour gap between the two scheduled daily runs (9 AM / 4:30 PM) --
+# a genuinely stuck row from a crashed worker still self-heals well before
+# the next automatic attempt, without needing manual intervention.
+OVERLAP_GUARD_MINUTES = 300
 
 # Pause after any document that triggered a Gemini call. Gemini's free tier
 # allows roughly 10-15 requests per minute -- processing documents

@@ -50,21 +50,22 @@ class GemCrawler(BaseCrawler):
     portal_name = "gem"
 
     # How many result pages to read per keyword (10 results/page on GeM).
-    # A single common word can have 60+ total results nationwide -- reading
-    # only page 1 (confirmed via direct comparison against a competitor's
-    # results) meant seeing whichever 10 tenders anywhere in India happened
-    # to close soonest, which could easily push genuine Gujarat tenders off
-    # the visible page entirely. 5 pages = up to 50 results/keyword, a
-    # balance between real coverage and not hammering GeM/taking forever.
-    MAX_PAGES_PER_KEYWORD = 5
+    # A single common word can have 60+ total results nationwide. Now that
+    # crawls run twice a day (9 AM / 4:30 PM) instead of every 45 minutes,
+    # runtime is no longer the binding constraint -- this is a generous
+    # defensive ceiling against a pagination-detection bug looping forever,
+    # not a real practical limit. The loop's own "no more results" /
+    # "no Next button" checks are what actually stop it in normal
+    # operation, almost always well before this number.
+    MAX_PAGES_PER_KEYWORD = 50
 
-    # Higher than MAX_PAGES_PER_KEYWORD on purpose -- this search exists
-    # specifically to be the thorough safety net for Gujarat, so it's worth
-    # reading more pages here even though it takes longer. Without a date
-    # filter (see search_by_consignee_state), Gujarat's total result count
-    # across every category could be large -- 10 pages is a starting point,
-    # adjust after seeing real results from the first live run.
-    MAX_CONSIGNEE_SEARCH_PAGES = 10
+    # Higher than MAX_PAGES_PER_KEYWORD on purpose -- this search has no
+    # keyword filter at all (every Gujarat tender across every category,
+    # not just uniforms), so its real total result count is naturally much
+    # larger. Same "defensive ceiling, not a real limit" reasoning as
+    # above -- with hours of runtime budget now available, letting this
+    # genuinely finish is the point, not cutting it short.
+    MAX_CONSIGNEE_SEARCH_PAGES = 100
 
     def __init__(self, base_url: str | None = None):
         self.base_url = base_url or settings.gem_base_url
