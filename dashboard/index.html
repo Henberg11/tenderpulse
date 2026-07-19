@@ -2,9 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>TenderPulse</title>
+
+<!-- Makes "Add to Home Screen" behave like a real app: own icon, opens
+     full-screen without browser chrome, correct splash color. -->
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TenderPulse">
+<meta name="theme-color" content="#0f1115">
+
 <style>
+  /* Dark theme by default, automatically switches to light if the phone/
+     browser is set to light mode -- no toggle needed, respects the
+     person's existing system preference. */
   :root {
     --bg: #0f1115;
     --card: #171a21;
@@ -15,14 +29,32 @@
     --green: #3ecf8e;
     --orange: #f5a623;
     --red: #ef5350;
+    --stat-bg: #171a21;
   }
-  * { box-sizing: border-box; }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f6f8;
+      --card: #ffffff;
+      --card-border: #e3e6eb;
+      --text: #1a1d23;
+      --text-dim: #6b7280;
+      --accent: #2f6fe0;
+      --green: #1e9e6b;
+      --orange: #c47d0a;
+      --red: #d64545;
+      --stat-bg: #ffffff;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: var(--bg);
     color: var(--text);
     padding-bottom: 40px;
+    /* Respect iPhone notch/home-indicator area when installed as an app */
+    padding-top: env(safe-area-inset-top);
   }
   header {
     position: sticky;
@@ -33,7 +65,31 @@
     z-index: 10;
   }
   h1 { font-size: 20px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
-  h1 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  h1 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+
+  /* Glance-friendly summary -- the whole point of checking each morning is
+     answering "does anything need my attention today", without reading
+     every card. This answers that in one line, no scrolling. */
+  .stats {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .stat {
+    background: var(--stat-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    flex: 1;
+    min-width: 90px;
+    text-align: center;
+  }
+  .stat .num { font-size: 20px; font-weight: 700; line-height: 1.2; }
+  .stat .label { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .stat.urgent .num { color: var(--red); }
+
   .controls { display: flex; gap: 8px; flex-wrap: wrap; }
   input[type="text"] {
     flex: 1;
@@ -41,23 +97,33 @@
     background: var(--card);
     border: 1px solid var(--card-border);
     color: var(--text);
-    padding: 10px 12px;
+    padding: 12px 14px;
     border-radius: 8px;
-    font-size: 14px;
+    font-size: 16px; /* 16px prevents iOS Safari from auto-zooming on focus */
   }
   .chip {
     background: var(--card);
     border: 1px solid var(--card-border);
     color: var(--text-dim);
-    padding: 8px 14px;
+    padding: 10px 16px;
     border-radius: 20px;
     font-size: 13px;
     cursor: pointer;
     white-space: nowrap;
+    user-select: none;
   }
   .chip.active { background: var(--accent); color: white; border-color: var(--accent); }
   main { padding: 16px; max-width: 720px; margin: 0 auto; }
-  .status-line { color: var(--text-dim); font-size: 13px; margin-bottom: 16px; }
+  .status-line { color: var(--text-dim); font-size: 13px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+  .refresh-btn {
+    background: none;
+    border: 1px solid var(--card-border);
+    color: var(--text-dim);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
   .card {
     background: var(--card);
     border: 1px solid var(--card-border);
@@ -72,7 +138,7 @@
     font-size: 11px;
     padding: 3px 8px;
     border-radius: 12px;
-    background: #232838;
+    background: rgba(128, 128, 128, 0.15);
     color: var(--text-dim);
   }
   .badge.precise { background: rgba(62, 207, 142, 0.15); color: var(--green); }
@@ -85,7 +151,7 @@
   .ai-summary {
     margin-top: 12px;
     padding: 10px 12px;
-    background: #1c2029;
+    background: rgba(128, 128, 128, 0.08);
     border-radius: 8px;
     font-size: 13px;
     color: var(--text-dim);
@@ -96,7 +162,7 @@
     border: none;
     color: var(--accent);
     font-size: 13px;
-    padding: 8px 0 0;
+    padding: 10px 0 0;
     cursor: pointer;
   }
   .details { display: none; margin-top: 10px; font-size: 13px; color: var(--text-dim); line-height: 1.6; }
@@ -104,22 +170,28 @@
   .details h4 { margin: 10px 0 4px; color: var(--text); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
   .empty, .loading, .error { text-align: center; color: var(--text-dim); padding: 60px 20px; font-size: 14px; }
   .error { color: var(--red); }
+  .empty-icon { font-size: 32px; margin-bottom: 8px; }
 </style>
 </head>
 <body>
 
 <header>
   <h1><span class="dot"></span> TenderPulse</h1>
+  <div class="stats" id="statsBar"></div>
   <div class="controls">
     <input type="text" id="search" placeholder="Search titles...">
     <span class="chip active" data-filter="all">All</span>
     <span class="chip" data-filter="precise">My Products</span>
+    <span class="chip" data-filter="urgent">Closing Soon</span>
     <span class="chip" data-filter="corrigendum">Changed</span>
   </div>
 </header>
 
 <main>
-  <div class="status-line" id="statusLine">Loading...</div>
+  <div class="status-line">
+    <span id="statusText">Loading...</span>
+    <button class="refresh-btn" onclick="loadTenders()">Refresh</button>
+  </div>
   <div id="results"></div>
 </main>
 
@@ -130,7 +202,7 @@ let activeFilter = "all";
 
 async function loadTenders() {
   const resultsEl = document.getElementById("results");
-  const statusEl = document.getElementById("statusLine");
+  const statusEl = document.getElementById("statusText");
 
   if (SUPABASE_CONFIG.url.includes("YOUR_PROJECT_REF")) {
     resultsEl.innerHTML = `<div class="error">config.js hasn't been filled in yet -- add your Supabase URL and anon key.</div>`;
@@ -138,7 +210,7 @@ async function loadTenders() {
     return;
   }
 
-  resultsEl.innerHTML = `<div class="loading">Loading your tenders...</div>`;
+  statusEl.textContent = "Refreshing...";
 
   try {
     const res = await fetch(
@@ -152,11 +224,14 @@ async function loadTenders() {
     );
     if (!res.ok) throw new Error(`Supabase returned ${res.status}: ${await res.text()}`);
     allTenders = await res.json();
-    statusEl.textContent = `${allTenders.length} tenders \u00b7 updated ${new Date().toLocaleTimeString()}`;
+    statusEl.textContent = `${allTenders.length} tenders \u00b7 updated ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+    renderStats();
     render();
   } catch (err) {
-    resultsEl.innerHTML = `<div class="error">Couldn't load tenders: ${err.message}</div>`;
-    statusEl.textContent = "";
+    if (allTenders.length === 0) {
+      resultsEl.innerHTML = `<div class="error">Couldn't load tenders: ${err.message}</div>`;
+    }
+    statusEl.textContent = "Refresh failed -- showing last loaded data";
   }
 }
 
@@ -164,6 +239,35 @@ function daysUntil(dateStr) {
   if (!dateStr) return null;
   const diff = new Date(dateStr) - new Date();
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
+}
+
+function renderStats() {
+  const statsBar = document.getElementById("statsBar");
+  const closingSoon = allTenders.filter((t) => {
+    const d = daysUntil(t.bid_submission_end);
+    return d !== null && d >= 0 && d <= 7;
+  }).length;
+  const coreMatches = allTenders.filter((t) => t.matched_keywords && t.matched_keywords.length > 0).length;
+  const changed = allTenders.filter((t) => t.status === "corrigendum_issued").length;
+
+  statsBar.innerHTML = `
+    <div class="stat ${closingSoon > 0 ? "urgent" : ""}">
+      <div class="num">${closingSoon}</div>
+      <div class="label">Closing \u22647 days</div>
+    </div>
+    <div class="stat">
+      <div class="num">${coreMatches}</div>
+      <div class="label">My Products</div>
+    </div>
+    <div class="stat">
+      <div class="num">${changed}</div>
+      <div class="label">Recently Changed</div>
+    </div>
+    <div class="stat">
+      <div class="num">${allTenders.length}</div>
+      <div class="label">Total Tracked</div>
+    </div>
+  `;
 }
 
 function render() {
@@ -176,10 +280,15 @@ function render() {
     filtered = filtered.filter((t) => t.matched_keywords && t.matched_keywords.length > 0);
   } else if (activeFilter === "corrigendum") {
     filtered = filtered.filter((t) => t.status === "corrigendum_issued");
+  } else if (activeFilter === "urgent") {
+    filtered = filtered.filter((t) => {
+      const d = daysUntil(t.bid_submission_end);
+      return d !== null && d >= 0 && d <= 7;
+    });
   }
 
   if (filtered.length === 0) {
-    resultsEl.innerHTML = `<div class="empty">No tenders match. Try a different search or filter.</div>`;
+    resultsEl.innerHTML = `<div class="empty"><div class="empty-icon">\u{1F4ED}</div>No tenders match. Try a different search or filter.</div>`;
     return;
   }
 
