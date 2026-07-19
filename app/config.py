@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     alert_email_to: str = ""
     slack_webhook_url: str = ""
+    # The live GitHub Pages / Netlify dashboard URL, used to link the digest
+    # email back to the actual dashboard -- without this, the email lists
+    # what's new but has no way to get to it.
+    dashboard_url: str = ""
 
     @property
     def cors_origins_list(self) -> list[str]:

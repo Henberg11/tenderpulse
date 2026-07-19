@@ -407,7 +407,7 @@ async function loadTenders() {
 
   try {
     const res = await fetch(
-      `${SUPABASE_CONFIG.url}/rest/v1/tenders?select=*,organisations(name)&order=bid_submission_end.asc.nullslast&limit=200`,
+      `${SUPABASE_CONFIG.url}/rest/v1/tenders?select=*,organisations(name)&or=${encodeURIComponent(`(bid_submission_end.is.null,bid_submission_end.gte.${new Date().toISOString()},is_applied.eq.true)`)}&order=bid_submission_end.asc.nullslast&limit=200`,
       {
         headers: {
           apikey: SUPABASE_CONFIG.anonKey,

@@ -16,6 +16,7 @@ from loguru import logger
 from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import celery_db_session
 from app.models import CrawlRun, CrawlRunStatus, PortalSource, Tender, Corrigendum
 from app.services.notifications import send_html_email
@@ -156,6 +157,9 @@ def _build_plain(new_matches: list[Tender], corrigenda: list[Corrigendum], closi
         lines.append(f"CLOSING SOON ({len(closing_soon)})")
         for t in closing_soon:
             lines.append(f"- {t.title[:80]} -- {_days_left(t.bid_submission_end)} left")
+    if settings.dashboard_url:
+        lines.append("")
+        lines.append(f"Open dashboard: {settings.dashboard_url}")
     return "\n".join(lines)
 
 
@@ -197,6 +201,13 @@ def _build_html(new_matches: list[Tender], corrigenda: list[Corrigendum], closin
         <div style="font-size: 12px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.03em; margin: 20px 0 8px;">Closing soon ({len(closing_soon)})</div>
         {''.join(tender_row(t, "#d64545") for t in closing_soon)}"""
 
+    dashboard_button = (
+        f'<a href="{settings.dashboard_url}" style="display: block; text-align: center; '
+        f'background: #E8A33D; color: #0E1116; font-size: 13px; font-weight: 600; padding: 11px; '
+        f'border-radius: 8px; text-decoration: none; margin-top: 20px;">Open dashboard</a>'
+        if settings.dashboard_url else ""
+    )
+
     return f"""
     <div style="max-width: 560px; margin: 0 auto; font-family: -apple-system, Arial, sans-serif;">
       <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
@@ -204,7 +215,8 @@ def _build_html(new_matches: list[Tender], corrigenda: list[Corrigendum], closin
         <span style="font-weight: 600; font-size: 16px; color: #1a1a1a;">TenderPulse</span>
       </div>
       {sections}
-      <p style="font-size: 11px; color: #999; text-align: center; margin: 24px 0 0;">Sent automatically by your TenderPulse system.</p>
+      {dashboard_button}
+      <p style="font-size: 11px; color: #999; text-align: center; margin: 16px 0 0;">Sent automatically by your TenderPulse system.</p>
     </div>"""
 
 
