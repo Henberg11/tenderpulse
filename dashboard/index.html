@@ -101,6 +101,15 @@
     border-radius: 8px;
     font-size: 16px; /* 16px prevents iOS Safari from auto-zooming on focus */
   }
+  select#stateFilter {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    color: var(--text);
+    padding: 12px 10px;
+    border-radius: 8px;
+    font-size: 14px;
+    max-width: 130px;
+  }
   .chip {
     background: var(--card);
     border: 1px solid var(--card-border);
@@ -136,6 +145,12 @@
   .card.card-soon { border-left-color: var(--orange); }
   .card-top { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
   .title { font-size: 15px; font-weight: 600; line-height: 1.4; flex: 1; }
+  .org-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-top: 4px;
+  }
   .deadline-badge {
     flex-shrink: 0;
     font-size: 12px;
@@ -204,6 +219,9 @@
   <div class="stats" id="statsBar"></div>
   <div class="controls">
     <input type="text" id="search" placeholder="Search titles...">
+    <select id="stateFilter">
+      <option value="">All States</option>
+    </select>
     <span class="chip active" data-filter="all">All</span>
     <span class="chip" data-filter="precise">My Products</span>
     <span class="chip" data-filter="urgent">Closing Soon</span>
@@ -249,6 +267,7 @@ async function loadTenders() {
     if (!res.ok) throw new Error(`Supabase returned ${res.status}: ${await res.text()}`);
     allTenders = await res.json();
     statusEl.textContent = `${allTenders.length} tenders \u00b7 updated ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+    populateStateFilter();
     renderStats();
     render();
   } catch (err) {
@@ -294,11 +313,26 @@ function renderStats() {
   `;
 }
 
+function populateStateFilter() {
+  const select = document.getElementById("stateFilter");
+  const currentValue = select.value;
+  const states = [...new Set(allTenders.map((t) => t.location).filter(Boolean))].sort();
+
+  select.innerHTML = `<option value="">All States</option>` +
+    states.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+  select.value = currentValue; // preserve selection across refreshes
+}
+
 function render() {
   const resultsEl = document.getElementById("results");
   const query = document.getElementById("search").value.toLowerCase();
+  const stateFilter = document.getElementById("stateFilter").value;
 
   let filtered = allTenders.filter((t) => t.title.toLowerCase().includes(query));
+
+  if (stateFilter) {
+    filtered = filtered.filter((t) => t.location === stateFilter);
+  }
 
   if (activeFilter === "precise") {
     filtered = filtered.filter((t) => t.matched_keywords && t.matched_keywords.length > 0);
@@ -338,7 +372,10 @@ function renderCard(t) {
   return `
     <div class="card ${deadlineClass ? "card-" + deadlineClass : ""}">
       <div class="card-top">
-        <div class="title">${escapeHtml(t.title)}</div>
+        <div>
+          <div class="title">${escapeHtml(t.title)}</div>
+          ${orgName ? `<div class="org-name">\u{1F3E2} ${escapeHtml(orgName)}</div>` : ""}
+        </div>
         <div class="deadline-badge ${deadlineClass}">${deadlineText}</div>
       </div>
       <div class="badges">
@@ -348,7 +385,6 @@ function renderCard(t) {
         ${(t.matched_keywords || []).map((k) => `<span class="badge">${escapeHtml(k)}</span>`).join("")}
       </div>
       <div class="meta">
-        ${orgName ? `<div>\u{1F3E2} ${escapeHtml(orgName)}</div>` : ""}
         ${t.location ? `<div>\u{1F4CD} ${escapeHtml(t.location)}</div>` : ""}
         <div>\u{1F4B0} ${t.estimated_value ? "\u20b9" + Number(t.estimated_value).toLocaleString("en-IN") : "Value not specified"}</div>
         <div>${escapeHtml(t.tender_number)}</div>
@@ -379,6 +415,7 @@ function escapeHtml(str) {
 }
 
 document.getElementById("search").addEventListener("input", render);
+document.getElementById("stateFilter").addEventListener("change", render);
 document.querySelectorAll(".chip").forEach((chip) => {
   chip.addEventListener("click", () => {
     document.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));

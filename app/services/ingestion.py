@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crawlers.base import RawTenderListing
 from app.models import Tender, TenderStatus, PortalSource, Corrigendum, Organisation
+from app.utils.indian_states import extract_state
 from app.utils.keywords import matches_any_keyword
 
 TRACKED_FIELDS = ["title", "estimated_value", "emd_amount", "bid_submission_end"]
@@ -59,6 +60,13 @@ async def ingest_listing(
 
     org = await get_or_create_organisation(db, listing.organisation_name)
     matched = matches_any_keyword(listing.title, keywords)
+    # GeM doesn't give state as its own field on the search results page, but
+    # it's usually embedded in the department/address text (e.g. "...
+    # Department Madhya Pradesh") -- extract it so tenders can be filtered
+    # by state on the dashboard. Central bodies (Ministry of Defence,
+    # Railways, etc.) correctly return None here -- they're national, not
+    # state-specific, not a missing-data bug.
+    state = listing.location or extract_state(listing.organisation_name)
 
     if existing is None:
         tender = Tender(
@@ -71,7 +79,7 @@ async def ingest_listing(
             estimated_value=listing.estimated_value,
             emd_amount=listing.emd_amount,
             bid_submission_end=listing.bid_submission_end,
-            location=listing.location,
+            location=state,
             matched_keywords=matched,
             status=TenderStatus.LIVE,
         )
@@ -107,6 +115,12 @@ async def ingest_listing(
     if corrigenda_created:
         existing.version_number += 1
         existing.status = TenderStatus.CORRIGENDUM_ISSUED
+
+    # Backfill for tenders saved before state extraction existed -- without
+    # this, every tender already in the database would stay blank forever,
+    # since only *new* tenders would get this field populated.
+    if not existing.location and state:
+        existing.location = state
 
     await db.flush()
     return IngestResult(tender=existing, corrigenda_created=corrigenda_created)
