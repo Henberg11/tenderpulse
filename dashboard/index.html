@@ -5,267 +5,361 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>TenderPulse</title>
 
-<!-- Makes "Add to Home Screen" behave like a real app: own icon, opens
-     full-screen without browser chrome, correct splash color. -->
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="TenderPulse">
-<meta name="theme-color" content="#0f1115">
+<meta name="theme-color" content="#0E1116">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
 <style>
-  /* Dark theme by default, automatically switches to light if the phone/
-     browser is set to light mode -- no toggle needed, respects the
-     person's existing system preference. */
   :root {
-    --bg: #0f1115;
-    --card: #171a21;
-    --card-border: #262b36;
-    --text: #e8eaed;
-    --text-dim: #9aa1ac;
-    --accent: #4f8cff;
-    --green: #3ecf8e;
-    --orange: #f5a623;
-    --red: #ef5350;
-    --stat-bg: #171a21;
+    --ink: #0E1116;
+    --paper: #171B23;
+    --paper-raised: #1D2330;
+    --line: #262B36;
+    --line-strong: #333A4A;
+    --text: #E7E9ED;
+    --text-dim: #8B92A3;
+    --text-faint: #5B6274;
+    --saffron: #E8A33D;
+    --saffron-dim: rgba(232, 163, 61, 0.14);
+    --verdant: #4FA876;
+    --verdant-dim: rgba(79, 168, 118, 0.14);
+    --alarm: #E15A4C;
+    --alarm-dim: rgba(225, 90, 76, 0.14);
+    --sans: 'Public Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
   }
   @media (prefers-color-scheme: light) {
     :root {
-      --bg: #f5f6f8;
-      --card: #ffffff;
-      --card-border: #e3e6eb;
-      --text: #1a1d23;
-      --text-dim: #6b7280;
-      --accent: #2f6fe0;
-      --green: #1e9e6b;
-      --orange: #c47d0a;
-      --red: #d64545;
-      --stat-bg: #ffffff;
+      --ink: #F6F5F1;
+      --paper: #FFFFFF;
+      --paper-raised: #FFFFFF;
+      --line: #E4E2DB;
+      --line-strong: #CFCCC2;
+      --text: #1A1B1E;
+      --text-dim: #63656E;
+      --text-faint: #96979E;
+      --saffron: #B87A1F;
+      --saffron-dim: rgba(184, 122, 31, 0.10);
+      --verdant: #1E7A50;
+      --verdant-dim: rgba(30, 122, 80, 0.10);
+      --alarm: #C23A2C;
+      --alarm-dim: rgba(194, 58, 44, 0.10);
     }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { -webkit-text-size-adjust: 100%; }
   body {
     margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg);
+    font-family: var(--sans);
+    background: var(--ink);
     color: var(--text);
-    padding-bottom: 40px;
-    /* Respect iPhone notch/home-indicator area when installed as an app */
+    padding-bottom: 48px;
     padding-top: env(safe-area-inset-top);
+    -webkit-font-smoothing: antialiased;
   }
+
+  /* ---------- Header ---------- */
   header {
     position: sticky;
     top: 0;
-    background: var(--bg);
-    padding: 16px 16px 12px;
-    border-bottom: 1px solid var(--card-border);
-    z-index: 10;
+    background: var(--ink);
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid var(--line);
+    z-index: 20;
   }
-  h1 { font-size: 20px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
-  h1 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+  .brand { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; }
+  .brand .pulse-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--verdant);
+    box-shadow: 0 0 0 3px var(--verdant-dim);
+    flex-shrink: 0;
+  }
+  .brand-name { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+  .brand-tag { font-size: 11px; color: var(--text-faint); font-family: var(--mono); margin-left: auto; }
 
-  /* Glance-friendly summary -- the whole point of checking each morning is
-     answering "does anything need my attention today", without reading
-     every card. This answers that in one line, no scrolling. */
+  /* ---------- Stats strip ---------- */
   .stats {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 14px;
   }
   .stat {
-    background: var(--stat-bg);
-    border: 1px solid var(--card-border);
-    border-radius: 10px;
-    padding: 10px 14px;
-    flex: 1;
-    min-width: 90px;
+    padding: 11px 6px;
     text-align: center;
+    border-right: 1px solid var(--line);
+    background: var(--paper);
   }
-  .stat .num { font-size: 20px; font-weight: 700; line-height: 1.2; }
-  .stat .label { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
-  .stat.urgent .num { color: var(--red); }
+  .stat:last-child { border-right: none; }
+  .stat .num { font-family: var(--mono); font-size: 19px; font-weight: 600; line-height: 1.1; color: var(--text); }
+  .stat.urgent .num { color: var(--alarm); }
+  .stat .label { font-size: 10px; color: var(--text-faint); margin-top: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
 
-  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  /* ---------- Controls ---------- */
+  .controls-row { display: flex; gap: 8px; margin-bottom: 8px; position: relative; }
   input[type="text"] {
     flex: 1;
-    min-width: 140px;
-    background: var(--card);
-    border: 1px solid var(--card-border);
+    min-width: 0;
+    background: var(--paper);
+    border: 1px solid var(--line);
     color: var(--text);
-    padding: 12px 14px;
-    border-radius: 8px;
-    font-size: 16px; /* 16px prevents iOS Safari from auto-zooming on focus */
+    padding: 11px 13px;
+    border-radius: 9px;
+    font-size: 16px;
+    font-family: var(--sans);
   }
-  select#stateFilter {
-    background: var(--card);
-    border: 1px solid var(--card-border);
+  input[type="text"]:focus { outline: none; border-color: var(--line-strong); }
+  input[type="text"]::placeholder { color: var(--text-faint); }
+
+  .region-btn {
+    background: var(--paper);
+    border: 1px solid var(--line);
     color: var(--text);
-    padding: 6px;
-    border-radius: 8px;
-    font-size: 14px;
-    flex: 1;
-    min-width: 160px;
-  }
-  select#stateFilter option {
-    padding: 6px 8px;
-  }
-  select#stateFilter option:checked {
-    background: var(--accent);
-    color: white;
-  }
-  .clear-states-btn {
-    background: none;
-    border: 1px solid var(--card-border);
-    color: var(--text-dim);
-    border-radius: 8px;
     padding: 0 14px;
+    border-radius: 9px;
     font-size: 13px;
-    cursor: pointer;
+    font-weight: 500;
+    font-family: var(--sans);
+    display: flex;
+    align-items: center;
+    gap: 6px;
     white-space: nowrap;
+    cursor: pointer;
   }
-  .chip {
-    background: var(--card);
-    border: 1px solid var(--card-border);
-    color: var(--text-dim);
-    padding: 10px 16px;
-    border-radius: 20px;
+  .region-btn svg { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.6; }
+  .region-count {
+    background: var(--saffron-dim);
+    color: var(--saffron);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 10px;
+  }
+
+  .region-popover {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    width: 240px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--paper-raised);
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+    z-index: 30;
+    padding: 6px;
+  }
+  .region-popover.open { display: block; }
+  .region-option {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 10px;
+    border-radius: 6px;
     font-size: 13px;
     cursor: pointer;
-    white-space: nowrap;
     user-select: none;
   }
-  .chip.active { background: var(--accent); color: white; border-color: var(--accent); }
-  main { padding: 16px; max-width: 720px; margin: 0 auto; }
-  .status-line { color: var(--text-dim); font-size: 13px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+  .region-option:hover { background: var(--line); }
+  .region-option input { accent-color: var(--saffron); width: 15px; height: 15px; flex-shrink: 0; }
+  .region-footer {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 10px 2px;
+    margin-top: 4px;
+    border-top: 1px solid var(--line);
+  }
+  .region-footer button {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 12px;
+    font-family: var(--sans);
+    cursor: pointer;
+    padding: 4px 6px;
+  }
+  .region-footer button.primary { color: var(--saffron); font-weight: 600; }
+
+  .chips-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+  .chip {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+    padding: 7px 13px;
+    border-radius: 20px;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .chip.active { background: var(--text); color: var(--ink); border-color: var(--text); }
+
+  main { padding: 14px 14px 0; max-width: 720px; margin: 0 auto; }
+  .status-line {
+    color: var(--text-faint);
+    font-size: 11.5px;
+    font-family: var(--mono);
+    margin: 14px 0 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
   .refresh-btn {
     background: none;
-    border: 1px solid var(--card-border);
+    border: 1px solid var(--line);
     color: var(--text-dim);
     border-radius: 6px;
-    padding: 4px 10px;
-    font-size: 12px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-family: var(--sans);
     cursor: pointer;
   }
+
+  /* ---------- Cards ---------- */
   .card {
-    background: var(--card);
-    border: 1px solid var(--card-border);
-    border-left: 3px solid var(--card-border);
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 12px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--line-strong);
+    border-radius: 10px;
+    padding: 15px 16px;
+    margin-bottom: 10px;
   }
-  .card.card-urgent { border-left-color: var(--red); }
-  .card.card-soon { border-left-color: var(--orange); }
+  .card.card-urgent { border-left-color: var(--alarm); }
+  .card.card-soon { border-left-color: var(--saffron); }
   .card-top { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
-  .title { font-size: 15px; font-weight: 600; line-height: 1.4; flex: 1; }
-  .org-name {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--accent);
-    margin-top: 4px;
-  }
+  .title { font-size: 14.5px; font-weight: 600; line-height: 1.4; flex: 1; letter-spacing: -0.005em; }
+  .org-name { font-size: 12.5px; font-weight: 500; color: var(--saffron); margin-top: 5px; display: flex; align-items: center; gap: 5px; }
+  .org-name svg { width: 12px; height: 12px; flex-shrink: 0; opacity: 0.85; }
+
   .deadline-badge {
     flex-shrink: 0;
-    font-size: 12px;
-    font-weight: 700;
-    padding: 4px 10px;
-    border-radius: 12px;
-    background: rgba(128, 128, 128, 0.15);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 9px;
+    border-radius: 6px;
+    background: var(--line);
     color: var(--text-dim);
     white-space: nowrap;
   }
-  .deadline-badge.urgent { background: rgba(239, 83, 80, 0.15); color: var(--red); }
-  .deadline-badge.soon { background: rgba(245, 166, 35, 0.15); color: var(--orange); }
-  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .deadline-badge.urgent { background: var(--alarm-dim); color: var(--alarm); }
+  .deadline-badge.soon { background: var(--saffron-dim); color: var(--saffron); }
+
+  .badges { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 10px; }
   .badge {
-    font-size: 11px;
+    font-size: 10.5px;
+    font-weight: 500;
     padding: 3px 8px;
-    border-radius: 12px;
-    background: rgba(128, 128, 128, 0.15);
+    border-radius: 5px;
+    background: var(--line);
     color: var(--text-dim);
   }
-  .badge.precise { background: rgba(62, 207, 142, 0.15); color: var(--green); }
-  .badge.corrigendum { background: rgba(245, 166, 35, 0.15); color: var(--orange); }
-  .badge.portal { background: rgba(79, 140, 255, 0.15); color: var(--accent); font-weight: 700; }
-  .meta { font-size: 13px; color: var(--text-dim); margin-top: 10px; line-height: 1.7; }
-  .meta a { color: var(--accent); text-decoration: none; }
+  .badge.precise { background: var(--verdant-dim); color: var(--verdant); }
+  .badge.corrigendum { background: var(--saffron-dim); color: var(--saffron); }
+  .badge.portal { background: rgba(139, 146, 163, 0.14); color: var(--text-dim); font-family: var(--mono); font-weight: 600; }
+
+  .meta { font-size: 12px; color: var(--text-dim); margin-top: 11px; line-height: 1.85; }
+  .meta-row { display: flex; align-items: center; gap: 6px; }
+  .meta-row svg { width: 12px; height: 12px; flex-shrink: 0; opacity: 0.6; }
+  .meta .tender-id { font-family: var(--mono); font-size: 11px; color: var(--text-faint); letter-spacing: 0.01em; }
+
   .ai-summary {
     margin-top: 12px;
-    padding: 10px 12px;
-    background: rgba(128, 128, 128, 0.08);
+    padding: 11px 13px;
+    background: var(--ink);
+    border: 1px solid var(--line);
     border-radius: 8px;
-    font-size: 13px;
+    font-size: 12.5px;
     color: var(--text-dim);
-    line-height: 1.5;
+    line-height: 1.6;
   }
-  .card-actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+
+  .card-actions { display: flex; gap: 8px; align-items: center; margin-top: 13px; flex-wrap: wrap; }
   .view-btn {
-    background: var(--accent);
-    color: white;
+    background: var(--saffron);
+    color: var(--ink);
     text-decoration: none;
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 600;
     padding: 8px 14px;
-    border-radius: 8px;
-    display: inline-block;
+    border-radius: 7px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
   }
   .toggle-btn {
-    background: var(--card);
-    border: 1px solid var(--card-border);
+    background: transparent;
+    border: 1px solid var(--line);
     color: var(--text-dim);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 500;
     padding: 8px 12px;
-    border-radius: 8px;
+    border-radius: 7px;
     cursor: pointer;
+    font-family: var(--sans);
   }
-  .toggle-btn.active-track {
-    background: rgba(245, 166, 35, 0.15);
-    border-color: var(--orange);
-    color: var(--orange);
-  }
-  .toggle-btn.active-applied {
-    background: rgba(62, 207, 142, 0.15);
-    border-color: var(--green);
-    color: var(--green);
-  }
+  .toggle-btn.active-track { background: var(--saffron-dim); border-color: var(--saffron); color: var(--saffron); }
+  .toggle-btn.active-applied { background: var(--verdant-dim); border-color: var(--verdant); color: var(--verdant); }
   .expand-btn {
     background: none;
     border: none;
-    color: var(--accent);
-    font-size: 13px;
-    padding: 10px 0 0;
+    color: var(--text-dim);
+    font-size: 12px;
+    font-family: var(--sans);
+    padding: 8px 2px;
     cursor: pointer;
+    margin-left: auto;
   }
-  .details { display: none; margin-top: 10px; font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+
+  .details { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--text-dim); line-height: 1.6; }
   .details.open { display: block; }
-  .details h4 { margin: 10px 0 4px; color: var(--text); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
-  .empty, .loading, .error { text-align: center; color: var(--text-dim); padding: 60px 20px; font-size: 14px; }
-  .error { color: var(--red); }
-  .empty-icon { font-size: 32px; margin-bottom: 8px; }
+  .details h4 { margin: 10px 0 4px; color: var(--text); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+  .details h4:first-child { margin-top: 0; }
+
+  .empty, .loading, .error {
+    text-align: center;
+    color: var(--text-faint);
+    padding: 64px 20px;
+    font-size: 13.5px;
+  }
+  .error { color: var(--alarm); }
+  .empty svg { width: 32px; height: 32px; margin-bottom: 10px; opacity: 0.4; }
 </style>
 </head>
 <body>
 
 <header>
-  <h1><span class="dot"></span> TenderPulse</h1>
+  <div class="brand">
+    <span class="pulse-dot"></span>
+    <span class="brand-name">TenderPulse</span>
+    <span class="brand-tag" id="clockTag"></span>
+  </div>
   <div class="stats" id="statsBar"></div>
-  <div class="controls">
-    <input type="text" id="search" placeholder="Search titles...">
+  <div class="controls-row">
+    <input type="text" id="search" placeholder="Search titles&hellip;">
+    <button class="region-btn" id="regionBtn" onclick="toggleRegionPopover()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+      <span id="regionLabel">Region</span>
+    </button>
+    <div class="region-popover" id="regionPopover"></div>
   </div>
-  <div class="controls" style="margin-top: 8px;">
-    <select id="stateFilter" multiple size="3"></select>
-    <button class="clear-states-btn" onclick="clearStateFilter()">Show all states</button>
-  </div>
-  <div class="controls" style="margin-top: 8px;">
+  <div class="chips-row">
     <span class="chip active" data-filter="all">All</span>
-    <span class="chip" data-filter="precise">My Products</span>
-    <span class="chip" data-filter="urgent">Closing Soon</span>
+    <span class="chip" data-filter="precise">My products</span>
+    <span class="chip" data-filter="urgent">Closing soon</span>
     <span class="chip" data-filter="corrigendum">Changed</span>
     <span class="chip" data-filter="tracked">Tracking</span>
     <span class="chip" data-filter="applied">Applied</span>
@@ -274,7 +368,7 @@
 
 <main>
   <div class="status-line">
-    <span id="statusText">Loading...</span>
+    <span id="statusText">Loading&hellip;</span>
     <button class="refresh-btn" onclick="loadTenders()">Refresh</button>
   </div>
   <div id="results"></div>
@@ -284,6 +378,20 @@
 <script>
 let allTenders = [];
 let activeFilter = "all";
+
+const ICONS = {
+  building: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v16"/><path d="M15 21V9a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v12"/><path d="M9 9h.01M9 12h.01M9 15h.01M6 9h.01M6 12h.01M6 15h.01"/></svg>',
+  pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
+  coin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 12h6M12 8v8"/></svg>',
+  arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  empty: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 7l3-4h12l3 4M9 12h6"/></svg>',
+};
+
+function updateClock() {
+  document.getElementById("clockTag").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+updateClock();
+setInterval(updateClock, 30000);
 
 async function loadTenders() {
   const resultsEl = document.getElementById("results");
@@ -295,7 +403,7 @@ async function loadTenders() {
     return;
   }
 
-  statusEl.textContent = "Refreshing...";
+  statusEl.textContent = "Refreshing\u2026";
 
   try {
     const res = await fetch(
@@ -310,7 +418,7 @@ async function loadTenders() {
     if (!res.ok) throw new Error(`Supabase returned ${res.status}: ${await res.text()}`);
     allTenders = await res.json();
     statusEl.textContent = `${allTenders.length} tenders \u00b7 updated ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
-    populateStateFilter();
+    populateRegionPopover();
     render();
   } catch (err) {
     if (allTenders.length === 0) {
@@ -327,21 +435,11 @@ function daysUntil(dateStr) {
 }
 
 function getStateFilteredTenders() {
-  const selectedStates = [...document.getElementById("stateFilter").selectedOptions].map((o) => o.value);
+  const selectedStates = [...document.querySelectorAll(".region-option input:checked")].map((el) => el.value);
   if (selectedStates.length === 0) return allTenders;
-  // Tenders with no location yet stay visible -- "we don't know its state
-  // yet" is different from "confirmed not in my selected states", and
-  // treating them the same hid the large majority of tenders (most
-  // locations are still being backfilled gradually, limited by Gemini's
-  // free-tier daily quota) the moment any state filter was active.
   return allTenders.filter((t) => !t.location || selectedStates.includes(t.location));
 }
 
-// Stats reflect the state selection (your region) but stay stable while you
-// search or tap the other filter chips below -- like an inbox's unread
-// count, they summarize your region at a glance rather than jumping around
-// with every keystroke, which would make them less useful as a quick
-// morning check.
 function renderStats() {
   const statsBar = document.getElementById("statsBar");
   const stateFiltered = getStateFilteredTenders();
@@ -355,7 +453,7 @@ function renderStats() {
   statsBar.innerHTML = `
     <div class="stat ${closingSoon > 0 ? "urgent" : ""}">
       <div class="num">${closingSoon}</div>
-      <div class="label">Closing \u22647 days</div>
+      <div class="label">Closing \u22647d</div>
     </div>
     <div class="stat">
       <div class="num">${coreMatches}</div>
@@ -363,48 +461,75 @@ function renderStats() {
     </div>
     <div class="stat">
       <div class="num">${changed}</div>
-      <div class="label">Recently Changed</div>
+      <div class="label">Changed</div>
     </div>
     <div class="stat">
       <div class="num">${stateFiltered.length}</div>
-      <div class="label">Total Tracked</div>
+      <div class="label">Tracked</div>
     </div>
   `;
 }
 
-// Defaults to your actual coverage area -- these two always appear as
-// options even before any tender from them has been seen yet, so the
-// default filter is meaningful from the very first load, not just once
-// enough data has accumulated.
 const DEFAULT_STATES = ["Gujarat", "Dadra and Nagar Haveli and Daman and Diu"];
-let stateFilterInitialized = false;
+let regionInitialized = false;
 
-function populateStateFilter() {
-  const select = document.getElementById("stateFilter");
-  const previouslySelected = new Set([...select.selectedOptions].map((o) => o.value));
+function populateRegionPopover() {
+  const popover = document.getElementById("regionPopover");
+  const previouslyChecked = new Set([...document.querySelectorAll(".region-option input:checked")].map((el) => el.value));
   const dataStates = allTenders.map((t) => t.location).filter(Boolean);
   const allStates = [...new Set([...DEFAULT_STATES, ...dataStates])].sort();
+  const toCheck = regionInitialized ? previouslyChecked : new Set(DEFAULT_STATES);
 
-  select.innerHTML = allStates.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+  popover.innerHTML =
+    allStates.map((s) => `
+      <label class="region-option">
+        <input type="checkbox" value="${escapeHtml(s)}" ${toCheck.has(s) ? "checked" : ""} onchange="render()">
+        <span>${escapeHtml(s)}</span>
+      </label>`).join("") +
+    `<div class="region-footer">
+       <button onclick="clearRegion()">Show all states</button>
+       <button class="primary" onclick="closeRegionPopover()">Done</button>
+     </div>`;
 
-  // Only apply the default selection once, the very first time -- after
-  // that, respect whatever the person has chosen, including if they
-  // deliberately cleared it to see all states.
-  const toSelect = stateFilterInitialized ? previouslySelected : new Set(DEFAULT_STATES);
-  [...select.options].forEach((opt) => {
-    opt.selected = toSelect.has(opt.value);
-  });
-  stateFilterInitialized = true;
+  regionInitialized = true;
+  updateRegionLabel();
 }
 
-function clearStateFilter() {
-  const select = document.getElementById("stateFilter");
-  [...select.options].forEach((opt) => (opt.selected = false));
+function updateRegionLabel() {
+  const count = document.querySelectorAll(".region-option input:checked").length;
+  const label = document.getElementById("regionLabel");
+  const total = document.querySelectorAll(".region-option input").length;
+  if (count === 0 || count === total) {
+    label.innerHTML = "All states";
+  } else if (count <= 2) {
+    const names = [...document.querySelectorAll(".region-option input:checked")].map((el) => el.value.split(" ")[0]);
+    label.innerHTML = names.join(", ");
+  } else {
+    label.innerHTML = `Region <span class="region-count">${count}</span>`;
+  }
+}
+
+function toggleRegionPopover() {
+  document.getElementById("regionPopover").classList.toggle("open");
+}
+function closeRegionPopover() {
+  document.getElementById("regionPopover").classList.remove("open");
+}
+function clearRegion() {
+  document.querySelectorAll(".region-option input").forEach((el) => (el.checked = false));
   render();
 }
+document.addEventListener("click", (e) => {
+  const popover = document.getElementById("regionPopover");
+  const btn = document.getElementById("regionBtn");
+  if (popover && !popover.contains(e.target) && !btn.contains(e.target)) {
+    popover.classList.remove("open");
+  }
+});
 
 function render() {
   renderStats();
+  updateRegionLabel();
   const resultsEl = document.getElementById("results");
   const query = document.getElementById("search").value.toLowerCase();
 
@@ -426,7 +551,7 @@ function render() {
   }
 
   if (filtered.length === 0) {
-    resultsEl.innerHTML = `<div class="empty"><div class="empty-icon">\u{1F4ED}</div>No tenders match. Try a different search or filter.</div>`;
+    resultsEl.innerHTML = `<div class="empty">${ICONS.empty}<div>No tenders match. Try a different search or filter.</div></div>`;
     return;
   }
 
@@ -436,7 +561,7 @@ function render() {
 function renderCard(t) {
   const days = daysUntil(t.bid_submission_end);
   let deadlineClass = "";
-  let deadlineText = "No deadline yet";
+  let deadlineText = "No deadline";
   if (days !== null) {
     deadlineClass = days <= 2 ? "urgent" : days <= 7 ? "soon" : "";
     deadlineText = days < 0 ? "Closed" : days === 0 ? "Today" : `${days}d left`;
@@ -454,32 +579,32 @@ function renderCard(t) {
       <div class="card-top">
         <div>
           <div class="title">${escapeHtml(t.title)}</div>
-          ${orgName ? `<div class="org-name">\u{1F3E2} ${escapeHtml(orgName)}</div>` : ""}
+          ${orgName ? `<div class="org-name">${ICONS.building} ${escapeHtml(orgName)}</div>` : ""}
         </div>
         <div class="deadline-badge ${deadlineClass}">${deadlineText}</div>
       </div>
       <div class="badges">
         <span class="badge portal">${escapeHtml((t.portal_source || "gem").toUpperCase())}</span>
-        ${isPrecise ? `<span class="badge precise">Core Match</span>` : ""}
-        ${isChanged ? `<span class="badge corrigendum">Recently Changed</span>` : ""}
+        ${isPrecise ? `<span class="badge precise">Core match</span>` : ""}
+        ${isChanged ? `<span class="badge corrigendum">Recently changed</span>` : ""}
         ${(t.matched_keywords || []).map((k) => `<span class="badge">${escapeHtml(k)}</span>`).join("")}
       </div>
       <div class="meta">
-        ${t.location ? `<div>\u{1F4CD} ${escapeHtml(t.location)}</div>` : `<div>\u{1F4CD} <em>State not yet known</em></div>`}
-        <div>\u{1F4B0} ${t.estimated_value ? "\u20b9" + Number(t.estimated_value).toLocaleString("en-IN") : "Value not specified"}</div>
-        <div>${escapeHtml(t.tender_number)}</div>
+        <div class="meta-row">${ICONS.pin} ${t.location ? escapeHtml(t.location) : "State not yet known"}</div>
+        <div class="meta-row">${ICONS.coin} ${t.estimated_value ? "\u20b9" + Number(t.estimated_value).toLocaleString("en-IN") : "Value not specified"}</div>
+        <div class="tender-id">${escapeHtml(t.tender_number)}</div>
       </div>
       ${t.ai_executive_summary ? `<div class="ai-summary">${escapeHtml(t.ai_executive_summary)}</div>` : ""}
       <div class="card-actions">
-        ${t.portal_url ? `<a class="view-btn" href="${t.portal_url}" target="_blank" rel="noopener">View Document \u2192</a>` : ""}
+        ${t.portal_url ? `<a class="view-btn" href="${t.portal_url}" target="_blank" rel="noopener">Document ${ICONS.arrow}</a>` : ""}
         <button class="toggle-btn ${t.is_tracked ? "active-track" : ""}" onclick="toggleField('${t.id}', 'is_tracked', ${!t.is_tracked})">${t.is_tracked ? "\u2605 Tracking" : "\u2606 Track"}</button>
-        <button class="toggle-btn ${t.is_applied ? "active-applied" : ""}" onclick="toggleField('${t.id}', 'is_applied', ${!t.is_applied})">${t.is_applied ? "\u2713 Applied" : "Mark Applied"}</button>
-        ${hasDetails ? `<button class="expand-btn" onclick="toggleDetails('${cardId}')">Eligibility &amp; risk \u2193</button>` : ""}
+        <button class="toggle-btn ${t.is_applied ? "active-applied" : ""}" onclick="toggleField('${t.id}', 'is_applied', ${!t.is_applied})">${t.is_applied ? "\u2713 Applied" : "Mark applied"}</button>
+        ${hasDetails ? `<button class="expand-btn" onclick="toggleDetails('${cardId}')">Details \u2193</button>` : ""}
       </div>
       ${hasDetails ? `
         <div class="details" id="${cardId}">
           ${t.ai_eligibility_summary ? `<h4>Eligibility</h4><div>${escapeHtml(t.ai_eligibility_summary)}</div>` : ""}
-          ${t.ai_risk_factors ? `<h4>Risk Factors</h4><div>${escapeHtml(t.ai_risk_factors)}</div>` : ""}
+          ${t.ai_risk_factors ? `<h4>Risk factors</h4><div>${escapeHtml(t.ai_risk_factors)}</div>` : ""}
         </div>
       ` : ""}
     </div>
@@ -491,12 +616,6 @@ function toggleDetails(id) {
 }
 
 async function toggleField(tenderId, field, newValue) {
-  // Updates ONLY the one field being toggled -- the security rule behind
-  // this (see dashboard/README.md) grants write access to is_tracked and
-  // is_applied specifically, nothing else. If it's ever misconfigured to
-  // allow more than that, this call would still only ever request these
-  // two columns, but the real protection lives in the database rule, not
-  // in this restraint.
   try {
     const res = await fetch(
       `${SUPABASE_CONFIG.url}/rest/v1/tenders?id=eq.${tenderId}`,
@@ -512,9 +631,6 @@ async function toggleField(tenderId, field, newValue) {
       }
     );
     if (!res.ok) throw new Error(`Update failed: ${res.status}`);
-
-    // Update the local copy too, so the button reflects the change
-    // immediately without waiting for the next 5-minute auto-refresh.
     const tender = allTenders.find((t) => t.id === tenderId);
     if (tender) tender[field] = newValue;
     render();
@@ -530,7 +646,6 @@ function escapeHtml(str) {
 }
 
 document.getElementById("search").addEventListener("input", render);
-document.getElementById("stateFilter").addEventListener("change", render);
 document.querySelectorAll(".chip").forEach((chip) => {
   chip.addEventListener("click", () => {
     document.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
@@ -541,7 +656,6 @@ document.querySelectorAll(".chip").forEach((chip) => {
 });
 
 loadTenders();
-// Refresh automatically every 5 minutes if left open on a phone.
 setInterval(loadTenders, 5 * 60 * 1000);
 </script>
 
