@@ -7,7 +7,7 @@ celery_app = Celery(
     "tenderpulse",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.tasks.crawl_tasks", "app.tasks.watchdog_tasks"],
+    include=["app.tasks.crawl_tasks", "app.tasks.watchdog_tasks", "app.tasks.digest_tasks"],
 )
 
 celery_app.conf.update(

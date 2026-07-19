@@ -12,6 +12,7 @@ from app.models import PortalSource, CrawlRun, CrawlRunStatus
 from app.services.document_intelligence import process_downloaded_document
 from app.services.ingestion import ingest_listing
 from app.tasks.celery_app import celery_app
+from app.tasks.digest_tasks import send_digest
 from app.utils.keywords import GEM_SEARCH_TERMS, SCHOOL_UNIFORM_KEYWORDS, matches_any_keyword
 from app.utils.redact import redact_secrets
 
@@ -155,6 +156,12 @@ async def _crawl_gem_async():
             run.status = CrawlRunStatus.SUCCESS if all_listings else CrawlRunStatus.PARTIAL
             run.finished_at = datetime.now(timezone.utc)
             await db.commit()
+
+            # Chained here, not scheduled independently -- this guarantees
+            # the digest never fires before this crawl's real data is
+            # ready. Its own "skip if nothing new" logic (digest_tasks.py)
+            # decides whether an email actually gets sent.
+            send_digest.delay()
 
         except Exception as e:
             run.status = CrawlRunStatus.FAILED
