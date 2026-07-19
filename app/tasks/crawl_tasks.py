@@ -22,7 +22,13 @@ from app.utils.redact import redact_secrets
 # confusing ways. A RUNNING row older than this is assumed to be an orphan
 # from a crashed worker, not a real overlap, so we proceed anyway rather than
 # blocking forever.
-OVERLAP_GUARD_MINUTES = 30
+#
+# Raised from 30 to 90: a crawl now downloads documents for every genuine
+# tender, not just Core Matches (~8x more downloads than before), and
+# legitimately takes 20-40+ minutes. The old 30-minute threshold was sized
+# for the previous, much faster crawl and was incorrectly treating real
+# in-progress runs as stale during real testing this session.
+OVERLAP_GUARD_MINUTES = 90
 
 # Pause after any document that triggered a Gemini call. Gemini's free tier
 # allows roughly 10-15 requests per minute -- processing documents

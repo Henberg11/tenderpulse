@@ -94,10 +94,23 @@ class GemCrawler(BaseCrawler):
                 # The visible title text is truncated with "..."; the full
                 # title lives in the data-content attribute of the same link
                 # (it's a Bootstrap popover).
+                #
+                # Short timeout (4s, not Playwright's 30s default) on
+                # purpose: a small number of cards use a different layout
+                # (visible in real testing as "RA NO:" reverse-auction-linked
+                # bids alongside the normal "BID NO:" ones) where this
+                # selector doesn't match at all. Confirmed via this
+                # session's actual logs -- these were costing a full 30
+                # seconds of wasted waiting *per occurrence, every single
+                # crawl* before this fix. Fully supporting that card
+                # variant's real structure still needs a live inspection
+                # session (same process as the original selectors) -- this
+                # fix doesn't recover those tenders, it just stops them from
+                # being expensive to skip.
                 title_link = card.locator("a[data-content]").first
-                title = await title_link.get_attribute("data-content")
+                title = await title_link.get_attribute("data-content", timeout=4000)
                 if not title:
-                    title = (await title_link.inner_text()).strip()
+                    title = (await title_link.inner_text(timeout=4000)).strip()
 
                 # No single stable selector was confirmed for the organisation
                 # name field, so we parse it from the card's plain text instead
