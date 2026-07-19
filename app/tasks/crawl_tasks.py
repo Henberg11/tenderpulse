@@ -24,11 +24,17 @@ from app.utils.redact import redact_secrets
 # blocking forever.
 OVERLAP_GUARD_MINUTES = 30
 
-# Pause between processing each downloaded document -- see the comment
-# where this is used below for why. 8 seconds keeps us comfortably under
-# Gemini's free-tier limit (roughly 10-15 requests/minute) even accounting
-# for the retry calls a rate-limit hit would still trigger.
+# Pause after any document that triggered a Gemini call. Gemini's free tier
+# allows roughly 10-15 requests per minute -- processing documents
+# back-to-back with no gap reliably hit that limit during real testing.
 GEMINI_PACING_SECONDS = 8
+
+# Pause after EVERY document download, even ones that don't call Gemini.
+# Downloads now happen for every genuine uniform tender, not just Core
+# Matches (a real volume increase, ~10 to potentially 80-90 per crawl) --
+# this keeps us being a polite, rate-limited visitor to GeM per our own
+# compliance principles (ROADMAP.md), not just avoiding Gemini's limit.
+DOWNLOAD_PACING_SECONDS = 2
 
 
 @celery_app.task(name="app.tasks.crawl_tasks.crawl_gem", bind=True, max_retries=3)
@@ -62,11 +68,7 @@ async def _crawl_gem_async():
 
                 # We DON'T discard anything here. Every genuine uniform-related
                 # tender gets saved -- title, department, dates -- so nothing
-                # is ever silently hidden. SCHOOL_UNIFORM_KEYWORDS is only
-                # used to tag which ones are precise core-business matches,
-                # and to decide which ones get their full document
-                # auto-downloaded (and AI-processed) vs. left as a link to
-                # open on GeM directly.
+                # is ever silently hidden.
                 run.listings_found = len(all_listings)
 
                 tenders_created = 0
@@ -80,37 +82,29 @@ async def _crawl_gem_async():
                     corrigenda_detected += result.corrigenda_created
 
                     is_precise_match = bool(matches_any_keyword(listing.title, SCHOOL_UNIFORM_KEYWORDS))
-                    if not is_precise_match:
-                        logger.info(f"[crawl_gem] {result.tender.tender_number} saved (broad match only, no auto-download)")
-                        continue
 
+                    # Every genuine tender's document now gets downloaded and
+                    # freely read (location, EMD, category -- no AI cost) --
+                    # not just Core Matches. This is what actually fills in
+                    # location for the majority of tenders, which previously
+                    # stayed blank forever unless they happened to precisely
+                    # match your core product keywords. AI summarization
+                    # (Gemini) still only runs for Core Matches, controlled
+                    # by run_ai_summary below -- this doesn't touch your AI
+                    # quota any more than before.
                     dest_dir = f"{settings.storage_dir}/{result.tender.tender_number}"
                     try:
                         paths = await crawler.download_documents(page, listing, dest_dir)
                         documents_downloaded += len(paths)
                         logger.info(f"[crawl_gem] downloaded {len(paths)} docs for {result.tender.tender_number}")
 
-                        # Read what was just downloaded: extract text, pull
-                        # out structured fields (free), generate an AI
-                        # summary (Gemini free tier), and properly record
-                        # the document in the database.
-                        #
-                        # GEMINI_PACING_SECONDS: Gemini's free tier allows
-                        # roughly 10-15 requests per minute. Processing
-                        # documents back-to-back with no gap reliably hit
-                        # that limit during real testing -- confirmed via
-                        # repeated "429 Too Many Requests" errors even with
-                        # retry logic in place, because the *next* document's
-                        # request fired again immediately after a retry
-                        # succeeded. A fixed pause between documents is a
-                        # simpler, more reliable fix than more retry
-                        # sophistication for this scale of usage (internal,
-                        # single portal, a handful of documents per crawl).
                         for path in paths:
                             try:
-                                await process_downloaded_document(db, result.tender, path, listing.portal_url)
+                                await process_downloaded_document(
+                                    db, result.tender, path, listing.portal_url, run_ai_summary=is_precise_match
+                                )
                                 await db.commit()
-                                await asyncio.sleep(GEMINI_PACING_SECONDS)
+                                await asyncio.sleep(GEMINI_PACING_SECONDS if is_precise_match else DOWNLOAD_PACING_SECONDS)
                             except Exception:
                                 logger.exception(f"[crawl_gem] document intelligence failed for {path}")
                     except Exception:

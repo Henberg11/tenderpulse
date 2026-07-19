@@ -41,4 +41,39 @@ SCHOOL_UNIFORM_KEYWORDS: list[str] = [
 # returned 1,118 results, almost all irrelevant (matching "School" in
 # education-qualification requirements for cleaning-staff tenders, nothing to
 # do with uniforms). Searching just "uniform" returned 63 results, mostly
-# relevant. So we search broad with
+# relevant. So we search broad with single words here, then filter precisely
+# with SCHOOL_UNIFORM_KEYWORDS against each real tender title afterward.
+#
+# Deliberately NOT searching "shoes"/"socks"/"belt" directly -- confirmed via
+# real testing that standalone accessory searches pull in a lot of unrelated
+# noise (safety boots, industrial belts, footwear for entirely different
+# purposes) that has nothing to do with uniforms. Garment pieces
+# (pant/shirt/kurta/salwar) are a much more targeted signal: standalone
+# clothing tenders on a government portal are almost always institutional/
+# uniform-related in the first place. Confirmed against real captured
+# tenders this session -- these words appear consistently across genuine
+# uniform sets ("Full Pants...Full Sleeve Shirt...", "Boys Shirt, Boys Pant,
+# Girls Kurta, Girls Salwar..."). This also happens to catch tenders that
+# list individual components without ever using the word "uniform" at all
+# (the original gap that prompted this change, GEM/2026/B/7785360).
+GEM_SEARCH_TERMS: list[str] = [
+    "uniform",
+    "sweater",
+    "tracksuit",
+    "textile",
+    "apparel",
+    "garment",
+    "stitching",
+    "pant",
+    "pants",
+    "shirt",
+    "kurta",
+    "salwar",
+]
+
+
+def matches_any_keyword(text: str, keywords: list[str] | None = None) -> list[str]:
+    """Return the list of keywords that matched inside `text` (case-insensitive)."""
+    keywords = keywords or SCHOOL_UNIFORM_KEYWORDS
+    text_lower = text.lower()
+    return [kw for kw in keywords if kw.lower() in text_lower]

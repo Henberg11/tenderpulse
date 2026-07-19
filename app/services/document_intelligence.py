@@ -23,6 +23,7 @@ place to check and adjust, same as gem_crawler.py's search-page selectors.
 """
 import hashlib
 import json
+import os
 import re
 
 import fitz  # PyMuPDF
@@ -200,34 +201,60 @@ async def _call_gemini_with_retry(prompt: str) -> str:
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
+# States/UTs whose documents are worth keeping on disk long-term (for a
+# future "mark as applied, track results" workflow -- see ROADMAP.md).
+# Everything else gets its PDF deleted right after the useful data has been
+# extracted from it, since we've already saved what we need (extracted_text
+# stays in the database either way) -- this is what keeps disk usage
+# bounded now that documents get downloaded for every genuine uniform
+# tender, not just Core Matches.
+GUJARAT_RELEVANT_STATES = {"Gujarat", "Dadra and Nagar Haveli and Daman and Diu"}
+
+
+def _should_delete_pdf(delivery_state: str | None) -> bool:
+    """Deliberately conservative: if a state couldn't be determined at all,
+    KEEP the file rather than risk deleting something Gujarat-relevant that
+    extraction simply failed to detect. Only delete when we're confident
+    it's genuinely elsewhere."""
+    if delivery_state is None:
+        return False
+    return delivery_state not in GUJARAT_RELEVANT_STATES
+
+
 async def process_downloaded_document(
-    db: AsyncSession, tender: Tender, file_path: str, source_url: str | None = None
+    db: AsyncSession,
+    tender: Tender,
+    file_path: str,
+    source_url: str | None = None,
+    run_ai_summary: bool = True,
 ) -> TenderDocument:
     """The orchestration step: takes a file already saved to disk by the
-    crawler and (1) records it properly in the database -- this wasn't
-    happening at all before, documents were downloaded but never tracked --
-    (2) extracts its text, (3) runs free structured-field extraction,
-    (4) runs AI summarization, (5) updates the Tender with whatever was
-    found. Every step degrades gracefully: a failure in AI summarization
-    still leaves the document properly saved and the free-extraction fields
-    applied.
+    crawler and (1) records it properly in the database, (2) extracts its
+    text, (3) runs free structured-field extraction (always, regardless of
+    run_ai_summary -- this is what lets EVERY genuine uniform tender get its
+    location/EMD/category filled in, not just Core Matches), (4) optionally
+    runs AI summarization, (5) updates the Tender, (6) deletes the PDF from
+    disk if it's not Gujarat-relevant, now that documents are downloaded at
+    much higher volume than before.
 
-    IMPORTANT: three different things need three different "already done"
-    checks, not one shared shortcut -- confirmed necessary after a real bug
-    where adding delivery-state extraction had zero effect on any tender
-    that already had its AI summary, because an earlier version of this
-    function returned early the moment an AI summary existed, skipping the
-    free-extraction step too. Free structured extraction (EMD, category,
-    delivery state) is cheap and un-rate-limited, so it always runs on
-    every pass -- only the expensive Gemini call is skipped once a summary
-    already exists."""
+    run_ai_summary=False skips the Gemini call entirely regardless of
+    whether a summary already exists -- used for non-Core-Match tenders,
+    where we want the free data (location especially) without spending any
+    AI quota on a full summary.
+
+    IMPORTANT: free structured extraction always runs on every pass, never
+    shortcut by an "already done" check -- confirmed necessary after a real
+    bug where an early-return for already-summarized tenders silently
+    skipped newly-added extraction logic too."""
     content_hash = _hash_file(file_path)
 
     existing_result = await db.execute(select(TenderDocument).where(TenderDocument.content_hash == content_hash))
     existing_doc = existing_result.scalar_one_or_none()
 
+    file_exists_on_disk = os.path.exists(file_path)
+
     if existing_doc:
-        text = existing_doc.extracted_text or extract_pdf_text(file_path)
+        text = existing_doc.extracted_text or (extract_pdf_text(file_path) if file_exists_on_disk else "")
         doc = existing_doc
     else:
         text = extract_pdf_text(file_path)
@@ -242,27 +269,31 @@ async def process_downloaded_document(
         )
         db.add(doc)
 
+    delivery_state = None
     if text:
         structured = extract_structured_fields(text)
+        delivery_state = structured.get("delivery_state")
         logger.info(
             f"[doc-intel] {tender.tender_number} structured fields found: "
             f"emd_amount={structured.get('emd_amount')}, category={structured.get('category')!r}, "
-            f"delivery_state={structured.get('delivery_state')!r} (text length: {len(text)} chars)"
+            f"delivery_state={delivery_state!r} (text length: {len(text)} chars)"
         )
         if structured.get("emd_amount") is not None and tender.emd_amount is None:
             tender.emd_amount = structured["emd_amount"]
         if structured.get("category") and not tender.category:
             tender.category = structured["category"][:200]
-        if structured.get("delivery_state"):
+        if delivery_state:
             # Overrides (not just fills in) the department-name-based guess
             # from ingestion.py -- the actual delivery/service-location
             # field inside the document is a genuinely more reliable signal
             # than inferring from who issued the tender, confirmed by a
             # real case where a central department's tender required
             # Gujarat delivery despite having no state in its own name.
-            tender.location = structured["delivery_state"]
+            tender.location = delivery_state
 
-        if tender.ai_executive_summary:
+        if not run_ai_summary:
+            logger.info(f"[doc-intel] {tender.tender_number} is a broad match -- free data only, no AI summary")
+        elif tender.ai_executive_summary:
             logger.info(f"[doc-intel] {tender.tender_number} already has an AI summary, skipping Gemini call")
         else:
             ai_result = await summarize_with_gemini(text)
@@ -273,6 +304,13 @@ async def process_downloaded_document(
                 logger.info(f"[doc-intel] AI summary generated for {tender.tender_number}")
             else:
                 logger.info(f"[doc-intel] no AI summary for {tender.tender_number} (skipped or failed, see above)")
+
+    if file_exists_on_disk and _should_delete_pdf(delivery_state):
+        try:
+            os.remove(file_path)
+            logger.info(f"[doc-intel] deleted PDF for {tender.tender_number} (state: {delivery_state!r}, not Gujarat-relevant)")
+        except OSError:
+            logger.exception(f"[doc-intel] failed to delete {file_path}")
 
     await db.flush()
     return doc
