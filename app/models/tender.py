@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Text, DateTime, Numeric, ForeignKey, Enum, Index, func
+from sqlalchemy import String, Text, DateTime, Numeric, ForeignKey, Enum, Index, Boolean, func
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -72,6 +72,14 @@ class Tender(Base):
     opportunity_score: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
 
     user_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    # Independent from user_status above (and each other) -- a tender can
+    # be tracked without being applied to (still deciding), or marked
+    # applied without ever having been explicitly tracked first (already
+    # knew you were bidding). Set from the dashboard via a narrow,
+    # column-scoped write permission -- see dashboard/README.md.
+    is_tracked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_applied: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

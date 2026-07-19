@@ -214,6 +214,26 @@
     border-radius: 8px;
     display: inline-block;
   }
+  .toggle-btn {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    color: var(--text-dim);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .toggle-btn.active-track {
+    background: rgba(245, 166, 35, 0.15);
+    border-color: var(--orange);
+    color: var(--orange);
+  }
+  .toggle-btn.active-applied {
+    background: rgba(62, 207, 142, 0.15);
+    border-color: var(--green);
+    color: var(--green);
+  }
   .expand-btn {
     background: none;
     border: none;
@@ -247,6 +267,8 @@
     <span class="chip" data-filter="precise">My Products</span>
     <span class="chip" data-filter="urgent">Closing Soon</span>
     <span class="chip" data-filter="corrigendum">Changed</span>
+    <span class="chip" data-filter="tracked">Tracking</span>
+    <span class="chip" data-filter="applied">Applied</span>
   </div>
 </header>
 
@@ -307,7 +329,12 @@ function daysUntil(dateStr) {
 function getStateFilteredTenders() {
   const selectedStates = [...document.getElementById("stateFilter").selectedOptions].map((o) => o.value);
   if (selectedStates.length === 0) return allTenders;
-  return allTenders.filter((t) => selectedStates.includes(t.location));
+  // Tenders with no location yet stay visible -- "we don't know its state
+  // yet" is different from "confirmed not in my selected states", and
+  // treating them the same hid the large majority of tenders (most
+  // locations are still being backfilled gradually, limited by Gemini's
+  // free-tier daily quota) the moment any state filter was active.
+  return allTenders.filter((t) => !t.location || selectedStates.includes(t.location));
 }
 
 // Stats reflect the state selection (your region) but stay stable while you
@@ -392,6 +419,10 @@ function render() {
       const d = daysUntil(t.bid_submission_end);
       return d !== null && d >= 0 && d <= 7;
     });
+  } else if (activeFilter === "tracked") {
+    filtered = filtered.filter((t) => t.is_tracked);
+  } else if (activeFilter === "applied") {
+    filtered = filtered.filter((t) => t.is_applied);
   }
 
   if (filtered.length === 0) {
@@ -434,13 +465,15 @@ function renderCard(t) {
         ${(t.matched_keywords || []).map((k) => `<span class="badge">${escapeHtml(k)}</span>`).join("")}
       </div>
       <div class="meta">
-        ${t.location ? `<div>\u{1F4CD} ${escapeHtml(t.location)}</div>` : ""}
+        ${t.location ? `<div>\u{1F4CD} ${escapeHtml(t.location)}</div>` : `<div>\u{1F4CD} <em>State not yet known</em></div>`}
         <div>\u{1F4B0} ${t.estimated_value ? "\u20b9" + Number(t.estimated_value).toLocaleString("en-IN") : "Value not specified"}</div>
         <div>${escapeHtml(t.tender_number)}</div>
       </div>
       ${t.ai_executive_summary ? `<div class="ai-summary">${escapeHtml(t.ai_executive_summary)}</div>` : ""}
       <div class="card-actions">
         ${t.portal_url ? `<a class="view-btn" href="${t.portal_url}" target="_blank" rel="noopener">View Document \u2192</a>` : ""}
+        <button class="toggle-btn ${t.is_tracked ? "active-track" : ""}" onclick="toggleField('${t.id}', 'is_tracked', ${!t.is_tracked})">${t.is_tracked ? "\u2605 Tracking" : "\u2606 Track"}</button>
+        <button class="toggle-btn ${t.is_applied ? "active-applied" : ""}" onclick="toggleField('${t.id}', 'is_applied', ${!t.is_applied})">${t.is_applied ? "\u2713 Applied" : "Mark Applied"}</button>
         ${hasDetails ? `<button class="expand-btn" onclick="toggleDetails('${cardId}')">Eligibility &amp; risk \u2193</button>` : ""}
       </div>
       ${hasDetails ? `
@@ -455,6 +488,39 @@ function renderCard(t) {
 
 function toggleDetails(id) {
   document.getElementById(id).classList.toggle("open");
+}
+
+async function toggleField(tenderId, field, newValue) {
+  // Updates ONLY the one field being toggled -- the security rule behind
+  // this (see dashboard/README.md) grants write access to is_tracked and
+  // is_applied specifically, nothing else. If it's ever misconfigured to
+  // allow more than that, this call would still only ever request these
+  // two columns, but the real protection lives in the database rule, not
+  // in this restraint.
+  try {
+    const res = await fetch(
+      `${SUPABASE_CONFIG.url}/rest/v1/tenders?id=eq.${tenderId}`,
+      {
+        method: "PATCH",
+        headers: {
+          apikey: SUPABASE_CONFIG.anonKey,
+          Authorization: `Bearer ${SUPABASE_CONFIG.anonKey}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({ [field]: newValue }),
+      }
+    );
+    if (!res.ok) throw new Error(`Update failed: ${res.status}`);
+
+    // Update the local copy too, so the button reflects the change
+    // immediately without waiting for the next 5-minute auto-refresh.
+    const tender = allTenders.find((t) => t.id === tenderId);
+    if (tender) tender[field] = newValue;
+    render();
+  } catch (err) {
+    alert(`Couldn't save that change: ${err.message}`);
+  }
 }
 
 function escapeHtml(str) {
