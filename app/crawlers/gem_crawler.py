@@ -295,7 +295,16 @@ class GemCrawler(BaseCrawler):
             # the Ministry/Organization dropdowns use), suggesting this one
             # might be a native <select> rather than a Select2-style
             # widget -- try the simple, direct approach first.
-            state_dropdown = page.locator("select").first
+            # CONFIRMED via a real error (not a guess this time): plain
+            # `page.locator("select").first` was grabbing the page's
+            # English/Hindi language-switcher dropdown (id="languageChange",
+            # sitting in the header) instead of the Consignee State field,
+            # simply because it appears earlier in the page's HTML. Target
+            # by the field's actual visible label instead of position --
+            # this also fails loudly (a clear error) rather than silently
+            # succeeding on the wrong element, if it ever matches more than
+            # one thing.
+            state_dropdown = page.get_by_label("Consignee State")
             await state_dropdown.select_option(label=state)
 
             # A real planning-window date filter (e.g. next 60 days) would
