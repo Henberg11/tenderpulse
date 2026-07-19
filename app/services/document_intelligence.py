@@ -174,8 +174,19 @@ def _is_rate_limit_error(exc: BaseException) -> bool:
 
 @retry(
     retry=retry_if_exception(_is_rate_limit_error),
-    stop=stop_after_attempt(4),
-    wait=wait_exponential(multiplier=5, min=5, max=60),
+    # Kept short and light on purpose. Now that GEMINI_PACING_SECONDS in
+    # crawl_tasks.py already prevents us from exceeding the per-minute
+    # limit, a 429 encountered here is almost certainly the DAILY quota,
+    # not a brief per-minute blip -- and the daily quota won't recover
+    # within the same crawl run no matter how long we wait. Confirmed via
+    # a real run where 4 attempts with up to 60s waits per document meant
+    # each stuck document cost 2+ minutes doing nothing useful, while
+    # dozens of other tenders behind it in the queue never got reached in
+    # time. A couple of quick attempts still covers genuine brief blips
+    # without stalling the whole backlog when it's actually quota
+    # exhaustion.
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=3, min=3, max=10),
 )
 async def _call_gemini_with_retry(prompt: str) -> str:
     async with httpx.AsyncClient(timeout=30) as client:
@@ -233,6 +244,11 @@ async def process_downloaded_document(
 
     if text:
         structured = extract_structured_fields(text)
+        logger.info(
+            f"[doc-intel] {tender.tender_number} structured fields found: "
+            f"emd_amount={structured.get('emd_amount')}, category={structured.get('category')!r}, "
+            f"delivery_state={structured.get('delivery_state')!r} (text length: {len(text)} chars)"
+        )
         if structured.get("emd_amount") is not None and tender.emd_amount is None:
             tender.emd_amount = structured["emd_amount"]
         if structured.get("category") and not tender.category:
