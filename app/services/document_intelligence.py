@@ -30,6 +30,7 @@ import httpx
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.config import settings
 from app.models import Tender, TenderDocument
@@ -114,9 +115,12 @@ def _search_amount(text: str, pattern: str) -> float | None:
 async def summarize_with_gemini(text: str) -> dict | None:
     """Ask Gemini for a plain-English executive summary, eligibility
     summary, and risk factors. Returns None (rather than raising) on any
-    failure -- a summarization failure shouldn't break ingestion of an
-    otherwise-good tender; the free-extraction fields above still get saved
-    either way."""
+    non-retryable failure -- a summarization failure shouldn't break
+    ingestion of an otherwise-good tender; the free-extraction fields above
+    still get saved either way. Rate-limit errors (429, common on the free
+    tier when several documents process back-to-back) ARE retried with
+    backoff rather than immediately giving up -- confirmed necessary after
+    a real crawl run hit this exact error."""
     if not settings.gemini_api_key:
         logger.warning("[doc-intel] no GEMINI_API_KEY configured, skipping AI summary")
         return None
@@ -132,16 +136,7 @@ Tender document text:
 {truncated}"""
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                GEMINI_API_URL.format(model=settings.gemini_model),
-                params={"key": settings.gemini_api_key},
-                json={"contents": [{"parts": [{"text": prompt}]}]},
-            )
-            response.raise_for_status()
-            data = response.json()
-
-        raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+        raw_text = await _call_gemini_with_retry(prompt)
         cleaned = re.sub(r"^```json\s*|\s*```$", "", raw_text.strip(), flags=re.MULTILINE)
         parsed = json.loads(cleaned)
         return {
@@ -154,6 +149,27 @@ Tender document text:
         return None
 
 
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429
+
+
+@retry(
+    retry=retry_if_exception(_is_rate_limit_error),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=5, min=5, max=60),
+)
+async def _call_gemini_with_retry(prompt: str) -> str:
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            GEMINI_API_URL.format(model=settings.gemini_model),
+            params={"key": settings.gemini_api_key},
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+        )
+        response.raise_for_status()
+        data = response.json()
+    return data["candidates"][0]["content"]["parts"][0]["text"]
+
+
 async def process_downloaded_document(
     db: AsyncSession, tender: Tender, file_path: str, source_url: str | None = None
 ) -> TenderDocument:
@@ -164,26 +180,41 @@ async def process_downloaded_document(
     (4) runs AI summarization, (5) updates the Tender with whatever was
     found. Every step degrades gracefully: a failure in AI summarization
     still leaves the document properly saved and the free-extraction fields
-    applied."""
+    applied.
+
+    IMPORTANT: "this exact file was already downloaded" and "this tender
+    already has its AI summary" are two different things -- confirmed via a
+    real run where several documents got downloaded successfully but their
+    AI summary attempt failed (rate-limited, before the retry logic
+    existed). Treating "file exists" as "fully done" meant those tenders
+    would have been stuck without a summary forever on every future crawl.
+    This now re-attempts the summary (reusing the already-extracted text,
+    no need to re-read the PDF) whenever it's still missing."""
     content_hash = _hash_file(file_path)
 
-    existing = await db.execute(select(TenderDocument).where(TenderDocument.content_hash == content_hash))
-    if existing.scalar_one_or_none():
-        logger.info(f"[doc-intel] {file_path} already processed (same content hash), skipping")
-        return existing.scalar_one_or_none()
+    existing_result = await db.execute(select(TenderDocument).where(TenderDocument.content_hash == content_hash))
+    existing_doc = existing_result.scalar_one_or_none()
 
-    text = extract_pdf_text(file_path)
+    if existing_doc and tender.ai_executive_summary:
+        logger.info(f"[doc-intel] {file_path} already fully processed (doc saved + AI summary present), skipping")
+        return existing_doc
 
-    doc = TenderDocument(
-        tender_id=tender.id,
-        file_name=file_path.split("/")[-1],
-        file_type="pdf",
-        source_url=source_url,
-        storage_path=file_path,
-        content_hash=content_hash,
-        extracted_text=text[:50000] if text else None,  # cap stored text size
-    )
-    db.add(doc)
+    if existing_doc:
+        logger.info(f"[doc-intel] {file_path} already downloaded but missing its AI summary -- retrying that part")
+        text = existing_doc.extracted_text or extract_pdf_text(file_path)
+        doc = existing_doc
+    else:
+        text = extract_pdf_text(file_path)
+        doc = TenderDocument(
+            tender_id=tender.id,
+            file_name=file_path.split("/")[-1],
+            file_type="pdf",
+            source_url=source_url,
+            storage_path=file_path,
+            content_hash=content_hash,
+            extracted_text=text[:50000] if text else None,  # cap stored text size
+        )
+        db.add(doc)
 
     if text:
         structured = extract_structured_fields(text)

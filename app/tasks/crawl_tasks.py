@@ -24,6 +24,12 @@ from app.utils.redact import redact_secrets
 # blocking forever.
 OVERLAP_GUARD_MINUTES = 30
 
+# Pause between processing each downloaded document -- see the comment
+# where this is used below for why. 8 seconds keeps us comfortably under
+# Gemini's free-tier limit (roughly 10-15 requests/minute) even accounting
+# for the retry calls a rate-limit hit would still trigger.
+GEMINI_PACING_SECONDS = 8
+
 
 @celery_app.task(name="app.tasks.crawl_tasks.crawl_gem", bind=True, max_retries=3)
 def crawl_gem(self):
@@ -88,10 +94,23 @@ async def _crawl_gem_async():
                         # out structured fields (free), generate an AI
                         # summary (Gemini free tier), and properly record
                         # the document in the database.
+                        #
+                        # GEMINI_PACING_SECONDS: Gemini's free tier allows
+                        # roughly 10-15 requests per minute. Processing
+                        # documents back-to-back with no gap reliably hit
+                        # that limit during real testing -- confirmed via
+                        # repeated "429 Too Many Requests" errors even with
+                        # retry logic in place, because the *next* document's
+                        # request fired again immediately after a retry
+                        # succeeded. A fixed pause between documents is a
+                        # simpler, more reliable fix than more retry
+                        # sophistication for this scale of usage (internal,
+                        # single portal, a handful of documents per crawl).
                         for path in paths:
                             try:
                                 await process_downloaded_document(db, result.tender, path, listing.portal_url)
                                 await db.commit()
+                                await asyncio.sleep(GEMINI_PACING_SECONDS)
                             except Exception:
                                 logger.exception(f"[crawl_gem] document intelligence failed for {path}")
                     except Exception:
