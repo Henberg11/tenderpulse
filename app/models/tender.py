@@ -81,6 +81,15 @@ class Tender(Base):
     is_tracked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_applied: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Set from the dashboard's "Analyze this tender" button. Deliberately
+    # NOT a direct client-side Gemini call -- that would require exposing
+    # the API key in public code, which GitHub's own secret scanner
+    # correctly blocked when first attempted. This flag gets picked up by
+    # a background job instead, keeping the key server-side the whole time
+    # while still giving genuine on-demand analysis (checked every few
+    # minutes, not just at the twice-daily crawl).
+    analyze_requested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     last_crawled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

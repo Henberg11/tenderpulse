@@ -7,7 +7,7 @@ celery_app = Celery(
     "tenderpulse",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.tasks.crawl_tasks", "app.tasks.watchdog_tasks", "app.tasks.digest_tasks"],
+    include=["app.tasks.crawl_tasks", "app.tasks.watchdog_tasks", "app.tasks.digest_tasks", "app.tasks.analyze_tasks"],
 )
 
 celery_app.conf.update(
@@ -42,5 +42,15 @@ celery_app.conf.beat_schedule = {
     "watchdog-check-crawler-health": {
         "task": "app.tasks.watchdog_tasks.check_crawler_health",
         "schedule": 60 * 60,
+    },
+    # Checked every 5 minutes, not tied to the twice-daily crawl schedule --
+    # this is what makes "Analyze this tender" on the dashboard feel
+    # genuinely on-demand rather than waiting until the next 9 AM/4:30 PM
+    # run. Each check is nearly free when there's nothing to do (one quick
+    # database query), so a 5-minute cadence is cheap even though it's much
+    # more frequent than everything else in this schedule.
+    "process-analysis-requests": {
+        "task": "app.tasks.analyze_tasks.process_analysis_requests",
+        "schedule": 5 * 60,
     },
 }
