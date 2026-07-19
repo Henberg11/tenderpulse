@@ -31,6 +31,16 @@ SCHOOL_UNIFORM_KEYWORDS: list[str] = [
 # do with uniforms). Searching just "uniform" returned 63 results, mostly
 # relevant. So we search broad with single words here, then filter precisely
 # with SCHOOL_UNIFORM_KEYWORDS against each real tender title afterward.
+#
+# shoes/socks/belt added after confirming a real missed tender
+# (GEM/2026/B/7785360, "Full Pants... Belt With Monogram Buckle... School
+# Shoes Black...") that never contained the word "uniform" at all -- it just
+# listed individual uniform components. Since "shoes", "socks", and "belt"
+# are already in SCHOOL_UNIFORM_KEYWORDS above, adding them here both
+# surfaces tenders like this AND correctly recognizes them as Core Matches
+# once found (no extra step needed) -- they were previously invisible from
+# the very first search step, before precise matching ever got a chance to
+# run.
 GEM_SEARCH_TERMS: list[str] = [
     "uniform",
     "sweater",
@@ -39,6 +49,9 @@ GEM_SEARCH_TERMS: list[str] = [
     "apparel",
     "garment",
     "stitching",
+    "shoes",
+    "socks",
+    "belt",
 ]
 
 
