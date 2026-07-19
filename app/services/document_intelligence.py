@@ -201,25 +201,21 @@ async def process_downloaded_document(
     still leaves the document properly saved and the free-extraction fields
     applied.
 
-    IMPORTANT: "this exact file was already downloaded" and "this tender
-    already has its AI summary" are two different things -- confirmed via a
-    real run where several documents got downloaded successfully but their
-    AI summary attempt failed (rate-limited, before the retry logic
-    existed). Treating "file exists" as "fully done" meant those tenders
-    would have been stuck without a summary forever on every future crawl.
-    This now re-attempts the summary (reusing the already-extracted text,
-    no need to re-read the PDF) whenever it's still missing."""
+    IMPORTANT: three different things need three different "already done"
+    checks, not one shared shortcut -- confirmed necessary after a real bug
+    where adding delivery-state extraction had zero effect on any tender
+    that already had its AI summary, because an earlier version of this
+    function returned early the moment an AI summary existed, skipping the
+    free-extraction step too. Free structured extraction (EMD, category,
+    delivery state) is cheap and un-rate-limited, so it always runs on
+    every pass -- only the expensive Gemini call is skipped once a summary
+    already exists."""
     content_hash = _hash_file(file_path)
 
     existing_result = await db.execute(select(TenderDocument).where(TenderDocument.content_hash == content_hash))
     existing_doc = existing_result.scalar_one_or_none()
 
-    if existing_doc and tender.ai_executive_summary:
-        logger.info(f"[doc-intel] {file_path} already fully processed (doc saved + AI summary present), skipping")
-        return existing_doc
-
     if existing_doc:
-        logger.info(f"[doc-intel] {file_path} already downloaded but missing its AI summary -- retrying that part")
         text = existing_doc.extracted_text or extract_pdf_text(file_path)
         doc = existing_doc
     else:
@@ -250,14 +246,17 @@ async def process_downloaded_document(
             # Gujarat delivery despite having no state in its own name.
             tender.location = structured["delivery_state"]
 
-        ai_result = await summarize_with_gemini(text)
-        if ai_result:
-            tender.ai_executive_summary = ai_result.get("executive_summary")
-            tender.ai_eligibility_summary = ai_result.get("eligibility_summary")
-            tender.ai_risk_factors = ai_result.get("risk_factors")
-            logger.info(f"[doc-intel] AI summary generated for {tender.tender_number}")
+        if tender.ai_executive_summary:
+            logger.info(f"[doc-intel] {tender.tender_number} already has an AI summary, skipping Gemini call")
         else:
-            logger.info(f"[doc-intel] no AI summary for {tender.tender_number} (skipped or failed, see above)")
+            ai_result = await summarize_with_gemini(text)
+            if ai_result:
+                tender.ai_executive_summary = ai_result.get("executive_summary")
+                tender.ai_eligibility_summary = ai_result.get("eligibility_summary")
+                tender.ai_risk_factors = ai_result.get("risk_factors")
+                logger.info(f"[doc-intel] AI summary generated for {tender.tender_number}")
+            else:
+                logger.info(f"[doc-intel] no AI summary for {tender.tender_number} (skipped or failed, see above)")
 
     await db.flush()
     return doc
