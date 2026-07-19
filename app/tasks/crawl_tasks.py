@@ -70,7 +70,38 @@ async def _crawl_gem_async():
                 # One browser, one page, reused for the entire run -- both
                 # the search phase and every document download after it.
                 all_listings = await crawler.search(page, GEM_SEARCH_TERMS)
-                logger.info(f"[crawl_gem] {len(all_listings)} raw listings found")
+                logger.info(f"[crawl_gem] {len(all_listings)} raw listings found via keyword search")
+
+                # Independent safety net: uses GeM's own structured
+                # Consignee State filter (real data, not a text guess),
+                # completely immune to the "what if it's on page 6"
+                # nationwide-pagination problem the keyword search still
+                # has. Confirmed necessary via a real, direct comparison
+                # against a competitor's results this session -- keyword
+                # search alone missed genuine Gujarat tenders, including
+                # one with the word "Uniform" right in its title, because
+                # nationwide sorting pushed it past page 1.
+                try:
+                    consignee_listings = await crawler.search_by_consignee_state(page, "Gujarat")
+                    existing_numbers = {l.tender_number for l in all_listings}
+                    caught_by_safety_net = 0
+                    for listing in consignee_listings:
+                        if listing.tender_number in existing_numbers:
+                            continue
+                        if matches_any_keyword(listing.title, SCHOOL_UNIFORM_KEYWORDS):
+                            all_listings.append(listing)
+                            existing_numbers.add(listing.tender_number)
+                            caught_by_safety_net += 1
+                    logger.info(
+                        f"[crawl_gem] consignee-state safety net: {len(consignee_listings)} Gujarat tenders "
+                        f"checked, {caught_by_safety_net} genuinely new ones caught that keyword search missed"
+                    )
+                except Exception:
+                    # This is a safety net, not the primary path -- if it
+                    # fails (e.g. GeM's page structure doesn't match our
+                    # best-guess selectors yet), the regular keyword search
+                    # results above are completely unaffected.
+                    logger.exception("[crawl_gem] consignee-state safety net failed, continuing with keyword results only")
 
                 # We DON'T discard anything here. Every genuine uniform-related
                 # tender gets saved -- title, department, dates -- so nothing

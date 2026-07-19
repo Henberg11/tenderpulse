@@ -58,6 +58,14 @@ class GemCrawler(BaseCrawler):
     # balance between real coverage and not hammering GeM/taking forever.
     MAX_PAGES_PER_KEYWORD = 5
 
+    # Higher than MAX_PAGES_PER_KEYWORD on purpose -- this search exists
+    # specifically to be the thorough safety net for Gujarat, so it's worth
+    # reading more pages here even though it takes longer. Without a date
+    # filter (see search_by_consignee_state), Gujarat's total result count
+    # across every category could be large -- 10 pages is a starting point,
+    # adjust after seeing real results from the first live run.
+    MAX_CONSIGNEE_SEARCH_PAGES = 10
+
     def __init__(self, base_url: str | None = None):
         self.base_url = base_url or settings.gem_base_url
 
@@ -252,6 +260,81 @@ class GemCrawler(BaseCrawler):
         except ValueError:
             logger.warning(f"[GeM] couldn't parse date: {text!r}")
             return None
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=30))
+    async def search_by_consignee_state(self, page: Page, state: str = "Gujarat") -> list[RawTenderListing]:
+        """A genuinely different, independent safety net alongside search()
+        above -- uses GeM's own structured "Consignee State" filter
+        (bidplus.gem.gov.in/advance-search, "Search by Consignee Location"
+        tab) instead of guessing keywords or paginating through nationwide
+        results sorted by date. This is real ground truth from GeM's own
+        data, not a text-matching guess -- more reliable than both the
+        department-name fallback in ingestion.py AND the PDF-based
+        extraction in document_intelligence.py.
+
+        Confirmed via live inspection (screenshots, 2026-07-19) that this
+        tab and a Consignee State dropdown genuinely exist. NOT YET
+        CONFIRMED: the exact interaction pattern below (tab click, dropdown
+        type, date range fields) -- written as a reasonable best guess from
+        what's visible, same as the original search() selectors were
+        before their first real test. Expect this to need one round of
+        correction against actual behavior.
+
+        Every result gets location set directly to `state` with full
+        confidence -- no need to guess it later, we already know it from
+        the filter itself."""
+        listings: list[RawTenderListing] = []
+
+        await page.goto(f"{self.base_url}/advance-search", wait_until="networkidle")
+
+        try:
+            await page.locator("text=Search by Consignee Location").click()
+            await page.wait_for_timeout(500)
+
+            # Screenshots showed a plain arrow (not the "x + arrow" combo
+            # the Ministry/Organization dropdowns use), suggesting this one
+            # might be a native <select> rather than a Select2-style
+            # widget -- try the simple, direct approach first.
+            state_dropdown = page.locator("select").first
+            await state_dropdown.select_option(label=state)
+
+            # A real planning-window date filter (e.g. next 60 days) would
+            # shrink Gujarat's total result count enough to see ALL of it
+            # reliably, not just the first few pages -- deliberately left
+            # out of this first version since the date fields likely need a
+            # JS calendar widget interaction, not typed text, and getting
+            # that wrong risked silently corrupting the search rather than
+            # failing loudly. Worth adding once the base interaction below
+            # is confirmed working against real GeM behavior.
+
+            await page.locator("button:has-text('Search')").first.click()
+            await page.wait_for_load_state("networkidle")
+        except Exception:
+            logger.exception(
+                f"[GeM] consignee-state search setup failed for '{state}' -- "
+                f"selectors likely need adjusting after seeing real behavior, see module docstring"
+            )
+            return listings
+
+        for page_num in range(1, self.MAX_CONSIGNEE_SEARCH_PAGES + 1):
+            cards = page.locator("div.bids div.card")
+            count = await self._wait_for_stable_result_count(page, cards)
+            logger.info(f"[GeM] consignee-state='{state}' page {page_num}: {count} result cards")
+
+            for i in range(count):
+                listing = await self._parse_one_card(page, cards.nth(i), keyword=f"consignee_state:{state}")
+                if listing:
+                    listing.location = state  # known with certainty, not a guess
+                    listings.append(listing)
+
+            if count == 0:
+                break
+            if not await self._go_to_next_page(page):
+                logger.info(f"[GeM] consignee-state='{state}': no more pages after page {page_num}")
+                break
+
+        logger.info(f"[GeM] consignee-state search for '{state}' found {len(listings)} total listings")
+        return listings
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=30))
     async def download_documents(self, page: Page, listing: RawTenderListing, dest_dir: str) -> list[str]:
