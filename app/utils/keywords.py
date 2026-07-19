@@ -2,6 +2,7 @@
 Keyword sets a crawler matches against tender titles/categories to decide what
 to ingest. Kept as data, not hardcoded into crawler logic.
 """
+import re
 
 # Precise phrases used to decide "is this tender actually relevant" -- checked
 # against each tender's real, full title after it's been fetched from GeM.
@@ -73,7 +74,19 @@ GEM_SEARCH_TERMS: list[str] = [
 
 
 def matches_any_keyword(text: str, keywords: list[str] | None = None) -> list[str]:
-    """Return the list of keywords that matched inside `text` (case-insensitive)."""
+    """Return the list of keywords that matched inside `text` (case-insensitive).
+
+    Uses word-boundary matching, not plain substring containment -- confirmed
+    a real false-positive via direct comparison against a competitor's
+    results: a tender for sanitary napkins and maternity pads was getting
+    tagged as a "pant" match, because "pant" is literally a substring of
+    "Panty". Multi-word phrases (like "school uniform") still match as a
+    phrase, just with boundaries at each end so they don't glue onto a
+    larger unrelated word either."""
     keywords = keywords or SCHOOL_UNIFORM_KEYWORDS
-    text_lower = text.lower()
-    return [kw for kw in keywords if kw.lower() in text_lower]
+    matches = []
+    for kw in keywords:
+        pattern = r"\b" + re.escape(kw.lower()) + r"\b"
+        if re.search(pattern, text.lower()):
+            matches.append(kw)
+    return matches

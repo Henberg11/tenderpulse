@@ -49,6 +49,15 @@ from app.crawlers.base import BaseCrawler, RawTenderListing, browser_page
 class GemCrawler(BaseCrawler):
     portal_name = "gem"
 
+    # How many result pages to read per keyword (10 results/page on GeM).
+    # A single common word can have 60+ total results nationwide -- reading
+    # only page 1 (confirmed via direct comparison against a competitor's
+    # results) meant seeing whichever 10 tenders anywhere in India happened
+    # to close soonest, which could easily push genuine Gujarat tenders off
+    # the visible page entirely. 5 pages = up to 50 results/keyword, a
+    # balance between real coverage and not hammering GeM/taking forever.
+    MAX_PAGES_PER_KEYWORD = 5
+
     def __init__(self, base_url: str | None = None):
         self.base_url = base_url or settings.gem_base_url
 
@@ -70,6 +79,18 @@ class GemCrawler(BaseCrawler):
         return list(deduped.values())
 
     async def _search_single_keyword(self, page: Page, keyword: str) -> list[RawTenderListing]:
+        """Confirmed via a direct, real comparison against a competitor's
+        results (TenderJeeto) that NOT paginating was the single biggest
+        cause of missed tenders -- worse than any keyword gap. GeM's
+        results for a single word like "uniform" can span 60+ results
+        across 7+ pages, sorted oldest-deadline-first ACROSS ALL OF INDIA,
+        not filtered to Gujarat. Reading only page 1 meant we were seeing
+        whichever 10 tenders (from any state) happened to close soonest
+        nationwide -- a real Gujarat tender with a slightly later deadline
+        could easily be pushed off that first page entirely by unrelated
+        tenders from other states. This walks forward through multiple
+        pages per keyword to see a real slice of the results, not just
+        whatever happened to load first."""
         listings: list[RawTenderListing] = []
 
         search_url = f"{self.base_url}/all-bids"
@@ -79,68 +100,100 @@ class GemCrawler(BaseCrawler):
         await search_box.fill(keyword)
         await search_box.press("Enter")
         await page.wait_for_load_state("networkidle")
-        cards = page.locator("div.bids div.card")
-        count = await self._wait_for_stable_result_count(page, cards)
-        logger.info(f"[GeM] '{keyword}': {count} result cards on page")
 
-        for i in range(count):
-            card = cards.nth(i)
-            try:
-                bid_link = card.locator("a.bid_no_hover").first
-                tender_number = (await bid_link.inner_text()).strip()
-                href = await bid_link.get_attribute("href") or ""
-                portal_url = href if href.startswith("http") else f"{self.base_url}{href}"
+        for page_num in range(1, self.MAX_PAGES_PER_KEYWORD + 1):
+            cards = page.locator("div.bids div.card")
+            count = await self._wait_for_stable_result_count(page, cards)
+            logger.info(f"[GeM] '{keyword}' page {page_num}: {count} result cards")
 
-                # The visible title text is truncated with "..."; the full
-                # title lives in the data-content attribute of the same link
-                # (it's a Bootstrap popover).
-                #
-                # Short timeout (4s, not Playwright's 30s default) on
-                # purpose: a small number of cards use a different layout
-                # (visible in real testing as "RA NO:" reverse-auction-linked
-                # bids alongside the normal "BID NO:" ones) where this
-                # selector doesn't match at all. Confirmed via this
-                # session's actual logs -- these were costing a full 30
-                # seconds of wasted waiting *per occurrence, every single
-                # crawl* before this fix. Fully supporting that card
-                # variant's real structure still needs a live inspection
-                # session (same process as the original selectors) -- this
-                # fix doesn't recover those tenders, it just stops them from
-                # being expensive to skip.
-                title_link = card.locator("a[data-content]").first
-                title = await title_link.get_attribute("data-content", timeout=4000)
-                if not title:
-                    title = (await title_link.inner_text(timeout=4000)).strip()
+            for i in range(count):
+                listing = await self._parse_one_card(page, cards.nth(i), keyword)
+                if listing:
+                    listings.append(listing)
 
-                # No single stable selector was confirmed for the organisation
-                # name field, so we parse it from the card's plain text instead
-                # of a fragile nested class chain -- more resilient to minor
-                # markup changes.
-                card_text = await card.inner_text()
-                org_name = self._extract_after_label(card_text, "Department Name And Address:")
+            if count == 0:
+                break  # nothing on this page at all -- definitely the end
 
-                # EMD and estimated value are NOT shown on the search results
-                # page -- they only exist inside the full tender PDF (see
-                # Phase 2: document intelligence). The deadline IS shown here
-                # though, so we capture that now.
-                end_date_text = self._extract_line_after_label(card_text, "End Date:")
-                bid_submission_end = self._parse_gem_datetime(end_date_text)
-
-                listings.append(
-                    RawTenderListing(
-                        tender_number=tender_number,
-                        title=title.strip(),
-                        portal_url=portal_url,
-                        organisation_name=org_name,
-                        bid_submission_end=bid_submission_end,
-                        raw_fields={"matched_keyword": keyword},
-                    )
-                )
-            except Exception as e:
-                logger.warning(f"[GeM] failed to parse a result card: {e}")
-                continue
+            advanced = await self._go_to_next_page(page)
+            if not advanced:
+                logger.info(f"[GeM] '{keyword}': no more pages after page {page_num}")
+                break
 
         return listings
+
+    async def _go_to_next_page(self, page: Page) -> bool:
+        """Clicks GeM's pagination "Next" control if one exists and is
+        usable. Returns False (safe to stop) if there's no next page, or if
+        anything about this goes wrong -- pagination failing should never
+        crash the whole keyword's results, just stop collecting more of
+        them for this keyword."""
+        try:
+            next_link = page.locator("a:has-text('Next'), li:has-text('Next') a").first
+            if await next_link.count() == 0:
+                return False
+            classes = await next_link.evaluate("el => el.closest('li') ? el.closest('li').className : ''")
+            if classes and ("disabled" in classes.lower()):
+                return False
+            await next_link.click()
+            await page.wait_for_load_state("networkidle")
+            await page.wait_for_timeout(500)
+            return True
+        except Exception as e:
+            logger.warning(f"[GeM] couldn't advance to next page (stopping here, not a crash): {e}")
+            return False
+
+    async def _parse_one_card(self, page: Page, card, keyword: str) -> RawTenderListing | None:
+        try:
+            bid_link = card.locator("a.bid_no_hover").first
+            tender_number = (await bid_link.inner_text()).strip()
+            href = await bid_link.get_attribute("href") or ""
+            portal_url = href if href.startswith("http") else f"{self.base_url}{href}"
+
+            # The visible title text is truncated with "..."; the full
+            # title lives in the data-content attribute of the same link
+            # (it's a Bootstrap popover).
+            #
+            # Short timeout (4s, not Playwright's 30s default) on
+            # purpose: a small number of cards use a different layout
+            # (visible in real testing as "RA NO:" reverse-auction-linked
+            # bids alongside the normal "BID NO:" ones) where this
+            # selector doesn't match at all. Confirmed via this
+            # session's actual logs -- these were costing a full 30
+            # seconds of wasted waiting *per occurrence, every single
+            # crawl* before this fix. Fully supporting that card
+            # variant's real structure still needs a live inspection
+            # session (same process as the original selectors) -- this
+            # fix doesn't recover those tenders, it just stops them from
+            # being expensive to skip.
+            title_link = card.locator("a[data-content]").first
+            title = await title_link.get_attribute("data-content", timeout=4000)
+            if not title:
+                title = (await title_link.inner_text(timeout=4000)).strip()
+
+            # No single stable selector was confirmed for the organisation
+            # name field, so we parse it from the card's plain text instead
+            # of a fragile nested class chain -- more resilient to minor
+            # markup changes.
+            card_text = await card.inner_text()
+            org_name = self._extract_after_label(card_text, "Department Name And Address:")
+
+            # EMD and estimated value are NOT shown on the search results
+            # page -- they only exist inside the full tender PDF (see
+            # Phase 2: document intelligence). The deadline IS shown here
+            # though, so we capture that now.
+            end_date_text = self._extract_line_after_label(card_text, "End Date:")
+            bid_submission_end = self._parse_gem_datetime(end_date_text)
+
+            return RawTenderListing(
+                tender_number=tender_number,
+                title=title.strip(),
+                portal_url=portal_url,
+                organisation_name=org_name,
+                bid_submission_end=bid_submission_end,
+                raw_fields={"matched_keyword": keyword},
+            )
+        except Exception as e:
+            logger.warning(f"[GeM] failed to parse a result card: {e}")
 
     @staticmethod
     async def _wait_for_stable_result_count(page: Page, cards_locator, max_wait_seconds: float = 8.0) -> int:
