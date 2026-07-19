@@ -34,6 +34,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from app.config import settings
 from app.models import Tender, TenderDocument
+from app.utils.indian_states import extract_state
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
@@ -83,6 +84,24 @@ def extract_structured_fields(text: str) -> dict:
     bid_end = _extract_line_after(text, "Bid End Date/Time")
     if bid_end:
         fields["bid_end_raw"] = bid_end.strip()
+
+    # This is the field that actually answers "does this tender need
+    # delivery/service in my state" -- confirmed against a real tender PDF
+    # where the issuing department (Central Board of Direct Taxes, a
+    # central body with no state in its name at all) required delivery
+    # specifically in Gujarat. Matching on department name alone (the
+    # weaker fallback used in app/services/ingestion.py, for tenders whose
+    # PDF hasn't been downloaded yet) would have missed this entirely.
+    geo_line = _extract_line_after(text, "Name of states/ UT for geographical presence is required")
+    delivery_state = extract_state(geo_line) if geo_line else None
+    if not delivery_state:
+        # That exact label isn't present on every tender type -- fall back
+        # to scanning the whole document for any state name mentioned
+        # anywhere (e.g. in a consignee's address block), which is still a
+        # meaningfully better signal than the department name alone.
+        delivery_state = extract_state(text)
+    if delivery_state:
+        fields["delivery_state"] = delivery_state
 
     return fields
 
@@ -222,6 +241,14 @@ async def process_downloaded_document(
             tender.emd_amount = structured["emd_amount"]
         if structured.get("category") and not tender.category:
             tender.category = structured["category"][:200]
+        if structured.get("delivery_state"):
+            # Overrides (not just fills in) the department-name-based guess
+            # from ingestion.py -- the actual delivery/service-location
+            # field inside the document is a genuinely more reliable signal
+            # than inferring from who issued the tender, confirmed by a
+            # real case where a central department's tender required
+            # Gujarat delivery despite having no state in its own name.
+            tender.location = structured["delivery_state"]
 
         ai_result = await summarize_with_gemini(text)
         if ai_result:
