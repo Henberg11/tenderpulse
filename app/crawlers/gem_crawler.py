@@ -316,6 +316,24 @@ class GemCrawler(BaseCrawler):
             # for="..."> associations, which get_by_label needed and which
             # may not actually exist here.
             state_dropdown = page.locator("select:visible:not(#languageChange)").first
+
+            # CONFIRMED via a precise real error this time: Playwright found
+            # this exact element correctly (id="state_name_con") but
+            # reported "did not find some options" for 30+ seconds -- the
+            # field itself was visible, but its actual <option> choices
+            # likely hadn't finished loading yet (a common pattern: options
+            # populated by a separate AJAX call after the field appears,
+            # not present in the initial HTML). Poll for real option count
+            # instead of guessing a fixed delay -- adapts to actual load
+            # time and gives a precise, loggable answer either way.
+            option_count = 0
+            for _ in range(20):  # up to ~10 seconds
+                option_count = await state_dropdown.locator("option").count()
+                if option_count > 1:  # more than just a "--Select--" placeholder
+                    break
+                await page.wait_for_timeout(500)
+            logger.info(f"[GeM] consignee-state: dropdown has {option_count} option(s) after waiting for them to load")
+
             await state_dropdown.select_option(label=state)
             logger.info(f"[GeM] consignee-state: selected '{state}' in the dropdown successfully")
 
