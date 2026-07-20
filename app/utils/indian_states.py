@@ -67,3 +67,88 @@ def extract_state(text: str | None) -> str | None:
         if re.search(r"\b" + re.escape(state) + r"\b", text, re.IGNORECASE):
             return state
     return None
+
+
+# Confirmed necessary via real evidence, not a guess: central-government
+# tender documents (Ministry of Defence, Indian Army, Ministry of Tribal
+# Affairs) were checked across their FULL text (30,000-47,000+ characters
+# each) and genuinely contained no state name anywhere -- extract_state()
+# above was correctly returning None, not failing to match something that
+# was there. But the consignee address section does list a city, even
+# though the specific office name right next to it is masked by GeM with
+# asterisks (e.g. "***********BANGALORE"). This maps known cities to their
+# state as a further fallback once a direct state-name search comes up
+# empty. Deliberately a curated list of state capitals, major metros (with
+# common alternate spellings), and cantonment towns -- not exhaustive
+# (India has thousands of cities/towns), but covers the pattern actually
+# observed in this data: central bodies delivering to major
+# cities/cantonments, not obscure small towns.
+CITY_TO_STATE: dict[str, str] = {
+    # Major metros (plus common alternate/older spellings)
+    "Bangalore": "Karnataka", "Bengaluru": "Karnataka",
+    "Mumbai": "Maharashtra", "Bombay": "Maharashtra",
+    "Pune": "Maharashtra", "Nagpur": "Maharashtra",
+    "Chennai": "Tamil Nadu", "Madras": "Tamil Nadu", "Coimbatore": "Tamil Nadu",
+    "Kolkata": "West Bengal", "Calcutta": "West Bengal",
+    "Hyderabad": "Telangana", "Secunderabad": "Telangana",
+    "Ahmedabad": "Gujarat", "Surat": "Gujarat", "Vadodara": "Gujarat", "Rajkot": "Gujarat",
+    "Jaipur": "Rajasthan", "Jodhpur": "Rajasthan", "Udaipur": "Rajasthan",
+    "Lucknow": "Uttar Pradesh", "Kanpur": "Uttar Pradesh", "Agra": "Uttar Pradesh",
+    "Varanasi": "Uttar Pradesh", "Meerut": "Uttar Pradesh", "Allahabad": "Uttar Pradesh",
+    "Prayagraj": "Uttar Pradesh",
+    "Patna": "Bihar", "Gaya": "Bihar",
+    "Bhopal": "Madhya Pradesh", "Indore": "Madhya Pradesh", "Gwalior": "Madhya Pradesh", "Jabalpur": "Madhya Pradesh",
+    "Raipur": "Chhattisgarh", "Bilaspur": "Chhattisgarh",
+    "Bhubaneswar": "Odisha", "Cuttack": "Odisha",
+    "Guwahati": "Assam",
+    "Chandigarh": "Chandigarh",
+    "Amritsar": "Punjab", "Ludhiana": "Punjab", "Jalandhar": "Punjab",
+    "Shimla": "Himachal Pradesh",
+    "Dehradun": "Uttarakhand",
+    "Ranchi": "Jharkhand", "Jamshedpur": "Jharkhand",
+    "Thiruvananthapuram": "Kerala", "Trivandrum": "Kerala", "Kochi": "Kerala", "Cochin": "Kerala",
+    "Panaji": "Goa", "Panjim": "Goa",
+    "Itanagar": "Arunachal Pradesh",
+    "Imphal": "Manipur",
+    "Shillong": "Meghalaya",
+    "Aizawl": "Mizoram",
+    "Kohima": "Nagaland",
+    "Gangtok": "Sikkim",
+    "Agartala": "Tripura",
+    "Srinagar": "Jammu and Kashmir", "Jammu": "Jammu and Kashmir",
+    "Leh": "Ladakh",
+    "New Delhi": "Delhi", "Delhi": "Delhi",
+    "Puducherry": "Puducherry", "Pondicherry": "Puducherry",
+    "Port Blair": "Andaman and Nicobar Islands",
+    # Common cantonment / military towns (relevant given how often Ministry
+    # of Defence / Indian Army tenders appear in this data)
+    "Ambala": "Haryana", "Panchkula": "Haryana", "Gurugram": "Haryana", "Gurgaon": "Haryana",
+    "Pathankot": "Punjab",
+    "Jalandhar Cantt": "Punjab",
+    "Roorkee": "Uttarakhand",
+    "Mhow": "Madhya Pradesh",
+    "Babina": "Uttar Pradesh",
+    "Ramgarh": "Jharkhand",
+    "Danapur": "Bihar",
+    "Wellington": "Tamil Nadu",
+    "Belgaum": "Karnataka", "Belagavi": "Karnataka",
+    "Kirkee": "Maharashtra", "Khadki": "Maharashtra",
+    "Jhansi": "Uttar Pradesh",
+    "Dahod": "Gujarat", "Junagadh": "Gujarat", "Bhuj": "Gujarat", "Porbandar": "Gujarat",
+    "Chhota Udaipur": "Gujarat", "Valsad": "Gujarat",
+}
+_CITIES_BY_LENGTH = sorted(CITY_TO_STATE.keys(), key=len, reverse=True)
+
+
+def extract_state_from_city(text: str | None) -> str | None:
+    """Fallback for when no state name is found directly (see extract_state
+    above) -- checks for a known city name instead. Deliberately run only
+    AFTER extract_state comes up empty, never instead of it -- a direct
+    state name is always a more reliable signal than inferring one from a
+    city."""
+    if not text:
+        return None
+    for city in _CITIES_BY_LENGTH:
+        if re.search(r"\b" + re.escape(city) + r"\b", text, re.IGNORECASE):
+            return CITY_TO_STATE[city]
+    return None

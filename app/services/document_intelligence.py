@@ -35,7 +35,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from app.config import settings
 from app.models import Tender, TenderDocument
-from app.utils.indian_states import extract_state
+from app.utils.indian_states import extract_state, extract_state_from_city
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
@@ -101,6 +101,15 @@ def extract_structured_fields(text: str) -> dict:
         # anywhere (e.g. in a consignee's address block), which is still a
         # meaningfully better signal than the department name alone.
         delivery_state = extract_state(text)
+    if not delivery_state:
+        # Confirmed necessary via real evidence: checked several central
+        # government tenders (Ministry of Defence, Indian Army) across
+        # their FULL text and found genuinely no state name anywhere --
+        # but the consignee's address section does list a city (e.g.
+        # "***********BANGALORE", the specific office masked by GeM but
+        # the city left visible). Falls back to a city-to-state lookup
+        # only once a direct state name search has already come up empty.
+        delivery_state = extract_state_from_city(text)
     if delivery_state:
         fields["delivery_state"] = delivery_state
 
