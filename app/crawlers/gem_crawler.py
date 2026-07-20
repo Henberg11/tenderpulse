@@ -334,7 +334,29 @@ class GemCrawler(BaseCrawler):
                 await page.wait_for_timeout(500)
             logger.info(f"[GeM] consignee-state: dropdown has {option_count} option(s) after waiting for them to load")
 
-            await state_dropdown.select_option(label=state)
+            # CONFIRMED via a real error this time: 38 real options loaded
+            # successfully, but none matched the literal string "Gujarat"
+            # exactly -- something about the real option text differs
+            # (whitespace, a state code prefix, capitalization). Rather
+            # than guess a fourth time, log the actual option text so this
+            # is definitively answered either way, and try a flexible
+            # (case-insensitive, substring) match as a fallback in the same
+            # pass -- this may well fix it outright, and even if it
+            # doesn't, the logged option list makes the next fix a
+            # certainty instead of another guess.
+            all_option_texts = await state_dropdown.locator("option").all_inner_texts()
+            logger.info(f"[GeM] consignee-state: actual option list: {all_option_texts!r}")
+
+            try:
+                await state_dropdown.select_option(label=state, timeout=5000)
+            except Exception:
+                matching_option = next(
+                    (text for text in all_option_texts if state.lower() in text.lower()), None
+                )
+                if not matching_option:
+                    raise
+                logger.info(f"[GeM] consignee-state: exact label match failed, using flexible match instead: {matching_option!r}")
+                await state_dropdown.select_option(label=matching_option)
             logger.info(f"[GeM] consignee-state: selected '{state}' in the dropdown successfully")
 
             await page.locator("button:has-text('Search')").first.click()
