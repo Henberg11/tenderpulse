@@ -359,22 +359,33 @@ class GemCrawler(BaseCrawler):
             await state_dropdown.select_option(label=matching_option)
             logger.info(f"[GeM] consignee-state: selected '{matching_option}' in the dropdown successfully")
 
-            # CONFIRMED via a real error: button:has-text('Search') matched
-            # ZERO elements for the full 30 seconds -- that selector only
-            # ever matches <button> tags, and finding nothing at all (not
-            # even the wrong one) strongly suggests the real Search control
-            # is an <input type="submit"> instead, a very common pattern in
-            # forms like this one (consistent with the Bootstrap
-            # "form-control" classes already confirmed on the dropdown).
-            # Covers every realistic HTML pattern for a clickable "Search"
-            # control in one locator, logging which one actually matched.
-            search_control = page.locator(
-                "button:has-text('Search'), "
-                "input[type='submit'][value='Search' i], "
-                "input[type='button'][value='Search' i]"
-            ).first
-            search_control_count = await search_control.count()
-            logger.info(f"[GeM] consignee-state: found {search_control_count} matching Search control(s)")
+            # Two consecutive wrong guesses about the element TYPE
+            # (<button>, then <input>) -- both found zero matches. Rather
+            # than guess a tag a third time, get_by_text() finds ANY
+            # element with matching visible text regardless of what tag it
+            # actually is (a very plausible real answer: an <a> styled as a
+            # button, extremely common with Bootstrap). If this also comes
+            # up empty, the logged HTML of anything containing "Search"
+            # gives us definitive ground truth instead of another guess.
+            search_control = page.get_by_text("Search", exact=False).first
+            search_control_count = await page.get_by_text("Search", exact=False).count()
+            logger.info(f"[GeM] consignee-state: found {search_control_count} element(s) with 'Search' in their text")
+
+            if search_control_count == 0:
+                # Ground truth, not a guess: dump the HTML around any
+                # element containing "Search" anywhere on the page, visible
+                # or not, so the next fix is certain either way.
+                page_html_sample = await page.evaluate(
+                    "() => { const els = [...document.querySelectorAll('*')].filter(e => e.textContent && e.textContent.trim() === 'Search' && e.children.length === 0); "
+                    "return els.slice(0, 5).map(e => e.outerHTML).join(' ||| '); }"
+                )
+                logger.info(f"[GeM] consignee-state: raw HTML of any 'Search' text found on the page: {page_html_sample!r}")
+                raise ValueError("No clickable Search control found by text search either -- see raw HTML logged above")
+
+            tag_name = await search_control.evaluate("el => el.tagName")
+            outer_html = await search_control.evaluate("el => el.outerHTML.slice(0, 300)")
+            logger.info(f"[GeM] consignee-state: first 'Search' match is a <{tag_name}>, HTML: {outer_html!r}")
+
             await search_control.click()
             await page.wait_for_load_state("networkidle")
             logger.info("[GeM] consignee-state: search submitted successfully")
