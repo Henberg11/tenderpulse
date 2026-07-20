@@ -347,19 +347,35 @@ class GemCrawler(BaseCrawler):
             all_option_texts = await state_dropdown.locator("option").all_inner_texts()
             logger.info(f"[GeM] consignee-state: actual option list: {all_option_texts!r}")
 
-            try:
-                await state_dropdown.select_option(label=state, timeout=5000)
-            except Exception:
-                matching_option = next(
-                    (text for text in all_option_texts if state.lower() in text.lower()), None
-                )
-                if not matching_option:
-                    raise
-                logger.info(f"[GeM] consignee-state: exact label match failed, using flexible match instead: {matching_option!r}")
-                await state_dropdown.select_option(label=matching_option)
-            logger.info(f"[GeM] consignee-state: selected '{state}' in the dropdown successfully")
+            # CONFIRMED with full certainty via a real run: GeM's options
+            # are in ALL CAPS ("GUJARAT", not "Gujarat") -- go straight to
+            # case-insensitive matching instead of wastefully trying an
+            # exact match first and waiting for it to fail.
+            matching_option = next(
+                (text for text in all_option_texts if state.lower() in text.lower()), None
+            )
+            if not matching_option:
+                raise ValueError(f"No option matching '{state}' found in: {all_option_texts!r}")
+            await state_dropdown.select_option(label=matching_option)
+            logger.info(f"[GeM] consignee-state: selected '{matching_option}' in the dropdown successfully")
 
-            await page.locator("button:has-text('Search')").first.click()
+            # CONFIRMED via a real error: button:has-text('Search') matched
+            # ZERO elements for the full 30 seconds -- that selector only
+            # ever matches <button> tags, and finding nothing at all (not
+            # even the wrong one) strongly suggests the real Search control
+            # is an <input type="submit"> instead, a very common pattern in
+            # forms like this one (consistent with the Bootstrap
+            # "form-control" classes already confirmed on the dropdown).
+            # Covers every realistic HTML pattern for a clickable "Search"
+            # control in one locator, logging which one actually matched.
+            search_control = page.locator(
+                "button:has-text('Search'), "
+                "input[type='submit'][value='Search' i], "
+                "input[type='button'][value='Search' i]"
+            ).first
+            search_control_count = await search_control.count()
+            logger.info(f"[GeM] consignee-state: found {search_control_count} matching Search control(s)")
+            await search_control.click()
             await page.wait_for_load_state("networkidle")
             logger.info("[GeM] consignee-state: search submitted successfully")
         except Exception:
