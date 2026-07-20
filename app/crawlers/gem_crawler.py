@@ -360,31 +360,35 @@ class GemCrawler(BaseCrawler):
             logger.info(f"[GeM] consignee-state: selected '{matching_option}' in the dropdown successfully")
 
             # Two consecutive wrong guesses about the element TYPE
-            # (<button>, then <input>) -- both found zero matches. Rather
-            # than guess a tag a third time, get_by_text() finds ANY
-            # element with matching visible text regardless of what tag it
-            # actually is (a very plausible real answer: an <a> styled as a
-            # button, extremely common with Bootstrap). If this also comes
-            # up empty, the logged HTML of anything containing "Search"
-            # gives us definitive ground truth instead of another guess.
-            search_control = page.get_by_text("Search", exact=False).first
-            search_control_count = await page.get_by_text("Search", exact=False).count()
-            logger.info(f"[GeM] consignee-state: found {search_control_count} element(s) with 'Search' in their text")
+            # CONFIRMED via a real error: broad (non-exact) text matching
+            # found 30 elements, and .first grabbed a navigation menu item
+            # ("Advanced Search", an <li>) instead of the real submit
+            # button -- clicking it didn't error, it just didn't submit
+            # anything, which is exactly why the search silently returned 0
+            # results afterward. Two real fixes needed together: exact text
+            # match (excludes "Advanced Search", which contains "Search" as
+            # a substring but isn't equal to it), and visibility filtering
+            # (the other 3 tabs almost certainly have their own "Search"
+            # buttons still sitting hidden in the DOM, same pattern already
+            # solved for the state dropdown itself).
+            exact_matches = page.get_by_text("Search", exact=True)
+            match_count = await exact_matches.count()
+            logger.info(f"[GeM] consignee-state: found {match_count} EXACT 'Search' text match(es)")
 
-            if search_control_count == 0:
-                # Ground truth, not a guess: dump the HTML around any
-                # element containing "Search" anywhere on the page, visible
-                # or not, so the next fix is certain either way.
-                page_html_sample = await page.evaluate(
-                    "() => { const els = [...document.querySelectorAll('*')].filter(e => e.textContent && e.textContent.trim() === 'Search' && e.children.length === 0); "
-                    "return els.slice(0, 5).map(e => e.outerHTML).join(' ||| '); }"
-                )
-                logger.info(f"[GeM] consignee-state: raw HTML of any 'Search' text found on the page: {page_html_sample!r}")
-                raise ValueError("No clickable Search control found by text search either -- see raw HTML logged above")
+            search_control = None
+            for i in range(match_count):
+                candidate = exact_matches.nth(i)
+                is_visible = await candidate.is_visible()
+                tag_name = await candidate.evaluate("el => el.tagName")
+                logger.info(f"[GeM] consignee-state: candidate {i} is a <{tag_name}>, visible={is_visible}")
+                if is_visible and search_control is None:
+                    search_control = candidate
 
-            tag_name = await search_control.evaluate("el => el.tagName")
+            if search_control is None:
+                raise ValueError(f"No VISIBLE exact 'Search' match found among {match_count} candidates -- see the candidate list logged above")
+
             outer_html = await search_control.evaluate("el => el.outerHTML.slice(0, 300)")
-            logger.info(f"[GeM] consignee-state: first 'Search' match is a <{tag_name}>, HTML: {outer_html!r}")
+            logger.info(f"[GeM] consignee-state: using this visible Search control: {outer_html!r}")
 
             await search_control.click()
             await page.wait_for_load_state("networkidle")
