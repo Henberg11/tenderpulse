@@ -3,23 +3,30 @@ Handles "Analyze this tender" requests from the dashboard, without the
 dashboard ever touching the Gemini key directly. Tapping the button just
 sets a flag (analyze_requested = true) via the same narrow, column-scoped
 write permission already used for Track/Applied -- this task checks for
-that flag every few minutes and does the actual Gemini call here, where the
-key has always safely lived.
+that flag every few minutes and does the actual work here, where the key
+has always safely lived.
 
-This exists specifically because the original design (calling Gemini
-directly from the browser) required exposing the API key in public code,
-which GitHub's own secret scanner correctly blocked. Same end result for
-the person using the dashboard -- tap a button, get an analysis within a
-few minutes -- with the key never leaving the server.
+Rebuilt: the crawl itself no longer downloads any documents at all (see
+crawl_tasks.py) -- discovery and document-reading are now fully separate,
+matching the actual intended design ("options like download document and
+analyze document" as dashboard actions, not automatic crawl behavior).
+This means analysis now genuinely does the whole job on demand: download
+the document fresh from GeM, extract its text, pull out free structured
+fields, and call Gemini -- reusing the exact same, already-proven pipeline
+(process_downloaded_document) the old automatic-download crawl used, just
+triggered by a dashboard click instead of happening automatically.
 """
 import asyncio
 
 from loguru import logger
 from sqlalchemy import select
 
+from app.config import settings
+from app.crawlers.base import browser_page, RawTenderListing
+from app.crawlers.gem_crawler import GemCrawler
 from app.database import celery_db_session
-from app.models import Tender, TenderDocument
-from app.services.document_intelligence import summarize_with_gemini
+from app.models import Tender
+from app.services.document_intelligence import process_downloaded_document
 from app.tasks.celery_app import celery_app
 
 
@@ -38,36 +45,48 @@ async def _process_analysis_requests_async():
 
         logger.info(f"[analyze] {len(requested)} tender(s) requested for on-demand analysis")
 
-        for tender in requested:
-            try:
-                await _analyze_one(db, tender)
-            except Exception:
-                logger.exception(f"[analyze] failed to analyze {tender.tender_number}")
-            finally:
-                # Always clear the flag, even on failure -- otherwise a
-                # tender with no document yet (or a genuine Gemini error)
-                # would get retried every few minutes forever. The person
-                # can just tap "Analyze" again later if it didn't work.
-                tender.analyze_requested = False
-                await db.commit()
+        crawler = GemCrawler()
+        async with browser_page() as page:
+            for tender in requested:
+                try:
+                    await _analyze_one(db, page, crawler, tender)
+                except Exception:
+                    logger.exception(f"[analyze] failed to analyze {tender.tender_number}")
+                finally:
+                    # Always clear the flag, even on failure -- otherwise a
+                    # tender that genuinely fails (bad download, Gemini
+                    # error) would get retried every few minutes forever.
+                    # The person can just tap "Analyze" again later.
+                    tender.analyze_requested = False
+                    await db.commit()
 
 
-async def _analyze_one(db, tender: Tender) -> None:
-    doc_result = await db.execute(
-        select(TenderDocument).where(TenderDocument.tender_id == tender.id).order_by(TenderDocument.id.desc()).limit(1)
+async def _analyze_one(db, page, crawler: GemCrawler, tender: Tender) -> None:
+    if not tender.portal_url:
+        logger.info(f"[analyze] {tender.tender_number} has no portal_url stored, can't download its document")
+        return
+
+    # Reconstruct just enough of a listing to reuse the existing, already-
+    # proven download function -- it only ever needed portal_url and
+    # tender_number, both of which are already stored on every Tender row.
+    listing = RawTenderListing(
+        tender_number=tender.tender_number,
+        title=tender.title,
+        portal_url=tender.portal_url,
     )
-    doc = doc_result.scalar_one_or_none()
 
-    if not doc or not doc.extracted_text:
-        logger.info(f"[analyze] no document text available yet for {tender.tender_number}, skipping")
+    dest_dir = f"{settings.storage_dir}/{tender.tender_number}"
+    paths = await crawler.download_documents(page, listing, dest_dir)
+    if not paths:
+        logger.info(f"[analyze] no document downloaded for {tender.tender_number}")
         return
 
-    ai_result = await summarize_with_gemini(doc.extracted_text)
-    if not ai_result:
-        logger.info(f"[analyze] Gemini summarization failed for {tender.tender_number} (see error above, if any)")
-        return
+    for path in paths:
+        # run_ai_summary=True always here -- unlike the automatic crawl
+        # (which only AI-summarizes Core Matches to conserve quota), an
+        # explicit "Analyze this tender" click is by definition a request
+        # for the AI summary specifically, regardless of Core Match status.
+        await process_downloaded_document(db, tender, path, tender.portal_url, run_ai_summary=True)
+        await db.commit()
 
-    tender.ai_executive_summary = ai_result.get("executive_summary")
-    tender.ai_eligibility_summary = ai_result.get("eligibility_summary")
-    tender.ai_risk_factors = ai_result.get("risk_factors")
     logger.info(f"[analyze] on-demand analysis complete for {tender.tender_number}")
