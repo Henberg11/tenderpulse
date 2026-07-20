@@ -263,65 +263,69 @@ class GemCrawler(BaseCrawler):
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=30))
     async def search_by_consignee_state(self, page: Page, state: str = "Gujarat") -> list[RawTenderListing]:
-        """A genuinely different, independent safety net alongside search()
-        above -- uses GeM's own structured "Consignee State" filter
+        """Uses GeM's own structured "Consignee State" filter
         (bidplus.gem.gov.in/advance-search, "Search by Consignee Location"
-        tab) instead of guessing keywords or paginating through nationwide
-        results sorted by date. This is real ground truth from GeM's own
-        data, not a text-matching guess -- more reliable than both the
-        department-name fallback in ingestion.py AND the PDF-based
-        extraction in document_intelligence.py.
+        tab) -- real ground truth from GeM's own data, not a text-matching
+        guess.
 
-        Confirmed via live inspection (screenshots, 2026-07-19) that this
-        tab and a Consignee State dropdown genuinely exist. NOT YET
-        CONFIRMED: the exact interaction pattern below (tab click, dropdown
-        type, date range fields) -- written as a reasonable best guess from
-        what's visible, same as the original search() selectors were
-        before their first real test. Expect this to need one round of
-        correction against actual behavior.
+        Rebuilt after two real, confirmed failures taught us specific
+        things, not guessed blind a third time:
+        1. `page.locator("select").first` grabbed the page's language
+           switcher (id="languageChange", in the header) -- confirmed via a
+           real error. Now explicitly excluded by that exact id.
+        2. `page.get_by_label("Consignee State")` timed out completely
+           (30s, zero partial match) -- most likely because the visible
+           label text isn't a properly-associated <label for="..."> in the
+           actual HTML (extremely common on forms not built with
+           accessibility semantics in mind), which get_by_label depends on
+           entirely. Replaced with visibility + exclusion-based targeting
+           instead, which doesn't depend on label semantics existing at all.
+        3. The first-ever screenshot of this page showed
+           ".../advance-search#tab0" in the browser's status bar when
+           hovering the first tab -- real evidence these are simple
+           URL-fragment-based tabs. Navigating directly to "#tab2"
+           (0-indexed: Bid/RA=0, Ministry/Org=1, Consignee Location=2, BOQ
+           Title=3) sidesteps click-targeting uncertainty entirely. Kept
+           the click as a backup in case the fragment alone doesn't
+           auto-activate the tab.
 
         Every result gets location set directly to `state` with full
         confidence -- no need to guess it later, we already know it from
         the filter itself."""
         listings: list[RawTenderListing] = []
 
-        await page.goto(f"{self.base_url}/advance-search", wait_until="networkidle")
+        await page.goto(f"{self.base_url}/advance-search#tab2", wait_until="networkidle")
 
         try:
-            await page.locator("text=Search by Consignee Location").click()
-            await page.wait_for_timeout(500)
+            # Backup in case the URL fragment alone doesn't activate the
+            # tab -- harmless no-op if it's already active.
+            tab_link = page.locator("text=Search by Consignee Location")
+            if await tab_link.count() > 0:
+                await tab_link.click()
 
-            # Screenshots showed a plain arrow (not the "x + arrow" combo
-            # the Ministry/Organization dropdowns use), suggesting this one
-            # might be a native <select> rather than a Select2-style
-            # widget -- try the simple, direct approach first.
-            # CONFIRMED via a real error (not a guess this time): plain
-            # `page.locator("select").first` was grabbing the page's
-            # English/Hindi language-switcher dropdown (id="languageChange",
-            # sitting in the header) instead of the Consignee State field,
-            # simply because it appears earlier in the page's HTML. Target
-            # by the field's actual visible label instead of position --
-            # this also fails loudly (a clear error) rather than silently
-            # succeeding on the wrong element, if it ever matches more than
-            # one thing.
-            state_dropdown = page.get_by_label("Consignee State")
+            # Explicit checkpoint: confirms the tab genuinely switched
+            # BEFORE we try to interact with anything inside it. If this
+            # specific wait fails, logs will say so exactly -- telling us
+            # definitively "the tab never switched" rather than leaving
+            # that ambiguous with whatever failed next.
+            await page.wait_for_selector("text=Consignee State", state="visible", timeout=10000)
+            logger.info("[GeM] consignee-state: tab switched successfully, 'Consignee State' field is visible")
+
+            # Visible + not-the-language-switcher, instead of label-based
+            # matching -- doesn't depend on the page having proper <label
+            # for="..."> associations, which get_by_label needed and which
+            # may not actually exist here.
+            state_dropdown = page.locator("select:visible:not(#languageChange)").first
             await state_dropdown.select_option(label=state)
-
-            # A real planning-window date filter (e.g. next 60 days) would
-            # shrink Gujarat's total result count enough to see ALL of it
-            # reliably, not just the first few pages -- deliberately left
-            # out of this first version since the date fields likely need a
-            # JS calendar widget interaction, not typed text, and getting
-            # that wrong risked silently corrupting the search rather than
-            # failing loudly. Worth adding once the base interaction below
-            # is confirmed working against real GeM behavior.
+            logger.info(f"[GeM] consignee-state: selected '{state}' in the dropdown successfully")
 
             await page.locator("button:has-text('Search')").first.click()
             await page.wait_for_load_state("networkidle")
+            logger.info("[GeM] consignee-state: search submitted successfully")
         except Exception:
             logger.exception(
-                f"[GeM] consignee-state search setup failed for '{state}' -- "
-                f"selectors likely need adjusting after seeing real behavior, see module docstring"
+                f"[GeM] consignee-state search failed for '{state}' -- see the log line immediately "
+                f"before this traceback for exactly which step got reached before failing"
             )
             return listings
 
