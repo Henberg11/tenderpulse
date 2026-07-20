@@ -50,21 +50,20 @@ class GemCrawler(BaseCrawler):
     portal_name = "gem"
 
     # How many result pages to read per keyword (10 results/page on GeM).
-    # A single common word can have 60+ total results nationwide. Now that
-    # crawls run twice a day (9 AM / 4:30 PM) instead of every 45 minutes,
-    # runtime is no longer the binding constraint -- this is a generous
-    # defensive ceiling against a pagination-detection bug looping forever,
-    # not a real practical limit. The loop's own "no more results" /
-    # "no Next button" checks are what actually stop it in normal
-    # operation, almost always well before this number.
-    MAX_PAGES_PER_KEYWORD = 50
+    # Deliberately trimmed back down from an earlier "effectively
+    # unbounded" (50) setting -- the Gujarat consignee-state search below
+    # (search_by_consignee_state) now exists specifically to catch
+    # Gujarat-relevant tenders regardless of nationwide sort order, making
+    # extreme keyword-search pagination redundant, not just slow. 12 pages
+    # covers "uniform" alone (63 results = 7 pages) with real room to
+    # spare, while cutting total crawl time meaningfully -- confirmed
+    # necessary after real crawls started taking 1-3+ hours with both
+    # mechanisms independently paginating to the extreme.
+    MAX_PAGES_PER_KEYWORD = 12
 
-    # Higher than MAX_PAGES_PER_KEYWORD on purpose -- this search has no
-    # keyword filter at all (every Gujarat tender across every category,
-    # not just uniforms), so its real total result count is naturally much
-    # larger. Same "defensive ceiling, not a real limit" reasoning as
-    # above -- with hours of runtime budget now available, letting this
-    # genuinely finish is the point, not cutting it short.
+    # Kept generous -- this IS the primary, precise mechanism for not
+    # missing Gujarat tenders now (see above), so it's worth letting this
+    # one go deep even though the keyword searches no longer do.
     MAX_CONSIGNEE_SEARCH_PAGES = 100
 
     def __init__(self, base_url: str | None = None):

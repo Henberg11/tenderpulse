@@ -18,6 +18,17 @@ from app.tasks.celery_app import celery_app
 STALENESS_THRESHOLD_HOURS = 4
 CONSECUTIVE_ZERO_RESULT_THRESHOLD = 5
 
+# How long a crawl can legitimately run before we assume it's actually
+# stuck (killed by a container restart mid-run, not genuinely still
+# working) rather than just being thorough. Confirmed via real crawls this
+# session taking 1-3 hours even when healthy -- 3 hours stays comfortably
+# above that while still catching a genuinely stuck run within one watchdog
+# cycle, instead of requiring manual SQL intervention every time. This is
+# the actual fix for a real, repeated problem today: several crawls got
+# killed by container restarts mid-run and sat stuck at "running" forever
+# until manually cleared.
+STUCK_RUN_THRESHOLD_HOURS = 3
+
 
 @celery_app.task(name="app.tasks.watchdog_tasks.check_crawler_health")
 def check_crawler_health():
@@ -27,7 +38,37 @@ def check_crawler_health():
 async def _check_crawler_health_async():
     async with celery_db_session() as db:
         for portal in PortalSource:
+            await _auto_recover_stuck_runs(db, portal.value)
             await _check_portal(db, portal.value)
+
+
+async def _auto_recover_stuck_runs(db, portal: str):
+    """Self-healing, not just alerting -- a crawl stuck at RUNNING for
+    longer than any real run has ever legitimately taken almost certainly
+    got killed by a restart, not still working. Clearing it automatically
+    means the next scheduled crawl (or a retry today) isn't blocked by a
+    stale lock waiting for a human to run SQL."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=STUCK_RUN_THRESHOLD_HOURS)
+    result = await db.execute(
+        select(CrawlRun).where(
+            CrawlRun.portal == portal,
+            CrawlRun.status == CrawlRunStatus.RUNNING,
+            CrawlRun.started_at < cutoff,
+        )
+    )
+    stuck_runs = result.scalars().all()
+    for run in stuck_runs:
+        run.status = CrawlRunStatus.FAILED
+        run.error_message = (
+            f"Auto-recovered by the watchdog: this run was still marked RUNNING after "
+            f"{STUCK_RUN_THRESHOLD_HOURS}+ hours, almost certainly killed by a container "
+            f"restart mid-run rather than still genuinely working. Cleared automatically "
+            f"so it doesn't block future crawl attempts."
+        )
+        run.finished_at = datetime.now(timezone.utc)
+        logger.warning(f"[watchdog] auto-recovered a stuck {portal} run from {run.started_at}")
+    if stuck_runs:
+        await db.commit()
 
 
 async def _check_portal(db, portal: str):
